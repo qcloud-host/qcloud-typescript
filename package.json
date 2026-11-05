@@ -1,0 +1,62 @@
+{
+  "name": "qcloud-ai",
+  "version": "0.2.0",
+  "description": "Official Node.js client for the QCloud AI inference API",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "prepublishOnly": "npm run build",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "qcloud",
+    "ai",
+    "llm",
+    "openai",
+    "inference",
+    "api",
+    "chat",
+    "completions"
+  ],
+  "author": "QCloud <info@qcloud.host>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qcloud-host/qcloud-typescript.git"
+  },
+  "homepage": "https://qcloud.host",
+  "bugs": {
+    "url": "https://github.com/qcloud-host/qcloud-typescript/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "tsx": "^4.20.6",
+    "@types/node": "^22.0.0"
+  }
+}
