@@ -20,7 +20,7 @@ describe("QCloudAI", () => {
 
   it("uses default base URL", () => {
     const client = new QCloudAI();
-    assert.equal(client.baseURL, "https://qcloud.host/api/v1");
+    assert.equal(client.baseURL, "https://www.qcloud.host/api/v1");
   });
 
   it("accepts custom base URL", () => {

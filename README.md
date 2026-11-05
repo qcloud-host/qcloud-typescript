@@ -91,7 +91,7 @@ try {
 }
 ```
 
-`apiKey` / `QCLOUD_API_KEY` is required. `baseURL` / `QCLOUD_BASE_URL` defaults to `https://qcloud.host/api/v1`. `timeout` is milliseconds per attempt, including stream delivery (default 600000). `maxRetries` defaults to 2. `defaultHeaders` adds headers and `fetch` injects a custom fetch transport. Request methods accept a second options argument with `signal` and `headers`. Browser execution is disabled to prevent embedding server API keys in client applications.
+`apiKey` / `QCLOUD_API_KEY` is required. `baseURL` / `QCLOUD_BASE_URL` defaults to `https://www.qcloud.host/api/v1`. `timeout` is milliseconds per attempt, including stream delivery (default 600000). `maxRetries` defaults to 2. `defaultHeaders` adds headers and `fetch` injects a custom fetch transport. Request methods accept a second options argument with `signal` and `headers`. Browser execution is disabled to prevent embedding server API keys in client applications.
 
 The SDK exports typed HTTP, authentication, billing, rate-limit, connection, timeout, and response-validation errors. Caller cancellation preserves the abort signal's reason.
 
@@ -101,7 +101,7 @@ The SDK exports typed HTTP, authentication, billing, rate-limit, connection, tim
 import OpenAI from "openai";
 const client = new OpenAI({
   apiKey: process.env.QCLOUD_API_KEY,
-  baseURL: "https://qcloud.host/api/v1",
+  baseURL: "https://www.qcloud.host/api/v1",
 });
 ```
 
