@@ -47,6 +47,7 @@ export interface ChatCompletionChunkChoice {
 }
 
 export interface ChatCompletionChunk {
+  usage?: CompletionUsage;
   id: string;
   object: "chat.completion.chunk";
   created: number;

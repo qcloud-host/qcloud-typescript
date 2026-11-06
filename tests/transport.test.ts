@@ -6,6 +6,7 @@ import {
   APIResponseValidationError,
   APIError,
   APITimeoutError,
+  APIConnectionError,
 } from "../src/index.js";
 import { Stream } from "../src/streaming.js";
 const params = {
@@ -94,7 +95,7 @@ test("unexpected success formats fail visibly", async () => {
     APIResponseValidationError,
   );
 });
-test("SSE supports byte fragmentation, unicode, CRLF, multiline data, comments, EOF and DONE", async () => {
+test("SSE supports byte fragmentation, unicode, CRLF, multiline data, comments and DONE", async () => {
   const input =
     ': ping\r\ndata:{"text":\r\ndata: "γειά 🌍"}\r\n\r\ndata: [DONE]\r\n\r\ndata: {"ignored":true}\n\n';
   const bytes = new TextEncoder().encode(input);
@@ -112,10 +113,44 @@ test("SSE supports byte fragmentation, unicode, CRLF, multiline data, comments, 
     out.push(item);
   assert.deepEqual(out, [{ text: "γειά 🌍" }]);
   assert.equal(cancelled, true);
-  const eof = [];
-  for await (const item of new Stream(new Response('data:{"x":1}')))
-    eof.push(item);
-  assert.deepEqual(eof, [{ x: 1 }]);
+  await assert.rejects(async () => {
+    for await (const _ of new Stream(new Response('data:{"x":1}'))) {}
+  }, /ended before \[DONE\]/);
+});
+test("ambiguous POST failures are not replayed, even with retries enabled", async () => {
+  for (const failure of [503, 408, 409, "network"] as const) {
+    let calls = 0;
+    const c = client(async () => {
+      calls++;
+      if (failure === "network") throw new TypeError("connection reset");
+      return json({ error: { message: "upstream failed" } }, failure);
+    }, { maxRetries: 2 });
+    await assert.rejects(c.chat.completions.create(params), failure === "network" ? APIConnectionError : APIError);
+    assert.equal(calls, 1);
+  }
+});
+test("read-only catalog requests still retry transient server failures", async () => {
+  let calls = 0;
+  const c = client(async () => ++calls === 1
+    ? json({ error: {} }, 503, { "retry-after": "0" })
+    : json({ object: "list", data: [] }), { maxRetries: 1 });
+  assert.deepEqual((await c.models.list()).data, []);
+  assert.equal(calls, 2);
+});
+test("organization selection is sent explicitly and invalid IDs fail early", async () => {
+  const organization = "11111111-1111-4111-8111-111111111111";
+  const c = client(async (_url, init) => {
+    assert.equal(new Headers(init?.headers).get("x-qcloud-organization"), organization);
+    return json({ object: "list", data: [] });
+  }, { organization });
+  await c.models.list();
+  assert.throws(() => client(fetch, { organization: "not-an-id" }), /organization/);
+});
+test("streamed provider errors retain the request ID", async () => {
+  const response = new Response('data:{"error":{"message":"failed"}}\n\n', { headers: { "x-request-id": "request-stream" } });
+  await assert.rejects(async () => {
+    for await (const _ of new Stream(response)) {}
+  }, (e) => e instanceof APIError && e.requestID === "request-stream");
 });
 test("breaking a stream cancels its body and releases cleanup", async () => {
   let cancelled = false,
@@ -138,6 +173,8 @@ test("stream error payloads and malformed data are surfaced", async () => {
   for (const [payload, ErrorType] of [
     ['{"error":{"message":"Provider failed"}}', APIError],
     ["not-json", APIResponseValidationError],
+    ["null", APIResponseValidationError],
+    ["[]", APIResponseValidationError],
   ] as const) {
     await assert.rejects(async () => {
       for await (const _ of new Stream(new Response(`data:${payload}\n\n`))) {

@@ -1,9 +1,10 @@
-import { APIError, APIResponseValidationError } from "./error.js";
+import { APIConnectionError, APIError, APIResponseValidationError } from "./error.js";
 /** A single-use SSE stream. Breaking iteration cancels the HTTP body. */
 export class Stream<T> implements AsyncIterable<T> {
   private reader: ReadableStreamDefaultReader<Uint8Array>;
   private consumed = false;
   private closed = false;
+  private requestID?: string;
   constructor(
     response: Response,
     private cleanup: () => void = () => {},
@@ -12,6 +13,7 @@ export class Stream<T> implements AsyncIterable<T> {
     if (!response.body)
       throw new APIResponseValidationError("Streaming response has no body");
     this.reader = response.body.getReader();
+    this.requestID = response.headers.get("x-request-id") ?? undefined;
   }
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
     if (this.consumed) throw new Error("This stream has already been consumed");
@@ -26,13 +28,17 @@ export class Stream<T> implements AsyncIterable<T> {
       } catch {
         throw new APIResponseValidationError("Invalid JSON in SSE data");
       }
-      if (value && typeof value === "object" && "error" in value) {
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new APIResponseValidationError("Expected an object in SSE data");
+      if ("error" in value) {
         const error = (value as { error: { message?: string } }).error;
-        throw new APIError(
+        const streamError = new APIError(
           200,
           error?.message ?? "The API reported a streaming error",
           { body: value },
         );
+        streamError.requestID = this.requestID;
+        throw streamError;
       }
       return value as T;
     };
@@ -60,10 +66,13 @@ export class Stream<T> implements AsyncIterable<T> {
           } else if (line === "data" || line.startsWith("data:"))
             data.push(line.slice(5).replace(/^ /, ""));
         }
-        if (done) return;
+        if (done && !this.closed)
+          throw new APIResponseValidationError("The SSE response ended before [DONE]");
       }
     } catch (error) {
       this.checkAbort();
+      if (error instanceof TypeError)
+        throw new APIConnectionError("The streaming connection was interrupted", { cause: error });
       throw error;
     } finally {
       await this.abort();

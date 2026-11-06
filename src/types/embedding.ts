@@ -1,7 +1,7 @@
 export interface Embedding {
   object: "embedding";
   index: number;
-  embedding: number[];
+  embedding: number[] | string;
   [key: string]: unknown;
 }
 
@@ -22,5 +22,7 @@ export interface CreateEmbeddingResponse {
 export interface EmbeddingCreateParams {
   model: string;
   input: string | string[];
+  dimensions?: number;
+  encoding_format?: "float" | "base64";
   [key: string]: unknown;
 }

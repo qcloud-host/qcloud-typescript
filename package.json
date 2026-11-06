@@ -28,6 +28,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "prepublishOnly": "npm run build",
+    "prepack": "npm run build",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "keywords": [
@@ -52,6 +53,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "esbuild": "0.28.2"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

@@ -18,6 +18,7 @@ export interface RequestOptions {
 export interface ClientOptions {
   apiKey?: string;
   baseURL?: string;
+  organization?: string;
   timeout?: number;
   maxRetries?: number;
   defaultHeaders?: Record<string, string>;
@@ -55,6 +56,7 @@ export class QCloudAI {
   readonly baseURL: string;
   readonly timeout: number;
   readonly maxRetries: number;
+  readonly organization?: string;
   readonly chat: Chat;
   readonly completions: Completions;
   readonly embeddings: Embeddings;
@@ -94,6 +96,9 @@ export class QCloudAI {
     }
     this.timeout = opts.timeout ?? 600_000;
     this.maxRetries = opts.maxRetries ?? 2;
+    this.organization = opts.organization ?? process.env.QCLOUD_ORGANIZATION_ID;
+    if (this.organization && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(this.organization))
+      throw new Error("organization must be an organization UUID");
     if (!Number.isFinite(this.timeout) || this.timeout <= 0)
       throw new Error("timeout must be positive");
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0)
@@ -111,6 +116,7 @@ export class QCloudAI {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
       "User-Agent": `qcloud-ai-node/${SDK_VERSION}`,
+      ...(this.organization ? { "X-QCloud-Organization": this.organization } : {}),
       ...this._defaultHeaders,
     };
   }
@@ -149,8 +155,8 @@ export class QCloudAI {
         if (!response.ok) {
           if (
             attempt < this.maxRetries &&
-            ([408, 409, 429].includes(response.status) ||
-              response.status >= 500)
+            (response.status === 429 ||
+              (method === "GET" && ([408, 409].includes(response.status) || response.status >= 500)))
           ) {
             await response.body?.cancel();
             cleanup();
@@ -196,8 +202,9 @@ export class QCloudAI {
         }
       } catch (err) {
         if (opts?.signal?.aborted) throw opts.signal.reason;
-        if (timedOut || (err instanceof TypeError && response === undefined)) {
-          if (attempt < this.maxRetries) {
+        if (timedOut || err instanceof TypeError) {
+          // A failed POST may already have generated billable output. Do not replay it.
+          if (method === "GET" && attempt < this.maxRetries) {
             cleanup();
             await sleep(retryDelay(undefined, attempt), opts?.signal);
             continue;
