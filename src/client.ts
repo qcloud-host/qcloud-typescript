@@ -2,6 +2,7 @@ import { Chat } from "./resources/chat.js";
 import { Completions } from "./resources/completions.js";
 import { Embeddings } from "./resources/embeddings.js";
 import { Models } from "./resources/models.js";
+import { Generation } from "./resources/generation.js";
 import {
   APIConnectionError,
   APITimeoutError,
@@ -9,11 +10,14 @@ import {
   raiseForStatus,
 } from "./error.js";
 import { Stream } from "./streaming.js";
+import { GenerationSessionStream } from "./session-stream.js";
 
 export const SDK_VERSION = "0.2.0";
 export interface RequestOptions {
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  timeout?: number;
+  maxRetries?: number;
 }
 export interface ClientOptions {
   apiKey?: string;
@@ -61,6 +65,7 @@ export class QCloudAI {
   readonly completions: Completions;
   readonly embeddings: Embeddings;
   readonly models: Models;
+  readonly generation: Generation;
   private _defaultHeaders: Record<string, string>;
   private _fetch: typeof globalThis.fetch;
   constructor(opts: ClientOptions = {}) {
@@ -109,6 +114,7 @@ export class QCloudAI {
     this.completions = new Completions(this);
     this.embeddings = new Embeddings(this);
     this.models = new Models(this);
+    this.generation = new Generation(this);
   }
   /** @internal */
   _buildHeaders(): Record<string, string> {
@@ -124,10 +130,14 @@ export class QCloudAI {
   async _request<T>(
     method: string,
     path: string,
-    opts?: RequestOptions & { body?: unknown; stream?: boolean },
+    opts?: RequestOptions & { body?: unknown; stream?: boolean; sessionId?: string },
   ): Promise<T> {
     const body =
       opts?.body === undefined ? undefined : JSON.stringify(opts.body);
+    const timeout = opts?.timeout ?? this.timeout;
+    const maxRetries = opts?.maxRetries ?? this.maxRetries;
+    if (!Number.isFinite(timeout) || timeout <= 0) throw new Error("timeout must be positive");
+    if (!Number.isInteger(maxRetries) || maxRetries < 0) throw new Error("maxRetries must be a non-negative integer");
     for (let attempt = 0; ; attempt++) {
       opts?.signal?.throwIfAborted();
       const controller = new AbortController();
@@ -135,7 +145,7 @@ export class QCloudAI {
       const timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-      }, this.timeout);
+      }, timeout);
       const abort = () => controller.abort(opts?.signal?.reason);
       opts?.signal?.addEventListener("abort", abort, { once: true });
       const cleanup = () => {
@@ -154,7 +164,7 @@ export class QCloudAI {
         });
         if (!response.ok) {
           if (
-            attempt < this.maxRetries &&
+            attempt < maxRetries &&
             (response.status === 429 ||
               (method === "GET" && ([408, 409].includes(response.status) || response.status >= 500)))
           ) {
@@ -187,10 +197,11 @@ export class QCloudAI {
               "Expected an SSE response from the streaming endpoint",
             );
           }
-          const stream = new Stream<unknown>(response, cleanup, () => {
+          const checkAbort = () => {
             if (opts?.signal?.aborted) throw opts.signal.reason;
             if (timedOut) throw new APITimeoutError();
-          });
+          };
+          const stream = opts.sessionId ? new GenerationSessionStream(response, opts.sessionId, cleanup, checkAbort) : new Stream<unknown>(response, cleanup, checkAbort);
           streamOwnsCleanup = true;
           return stream as T;
         }
@@ -204,7 +215,7 @@ export class QCloudAI {
         if (opts?.signal?.aborted) throw opts.signal.reason;
         if (timedOut || err instanceof TypeError) {
           // A failed POST may already have generated billable output. Do not replay it.
-          if (method === "GET" && attempt < this.maxRetries) {
+          if (method === "GET" && attempt < maxRetries) {
             cleanup();
             await sleep(retryDelay(undefined, attempt), opts?.signal);
             continue;

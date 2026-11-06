@@ -46,3 +46,13 @@ export type {
 export type { Model, ModelList } from "./types/model.js";
 
 export { QCloudAI as QCloud } from "./client.js";
+export { GenerationJobError, GenerationTimeoutError } from "./resources/generation.js";
+export { renderGenerationModelReference } from "./generation-docs.js";
+export { GenerationSessionStream } from "./session-stream.js";
+export type { GenerationPollOptions } from "./resources/generation.js";
+export type {
+  JSONValue, GenerationModel, GenerationModelList, GenerationModelListParams,
+  GenerationSchema, GenerationJobStatus, GenerationBilling, GenerationJob,
+  GenerationSubmitParams, GenerationResult, GenerationPendingResult, GenerationSubscription,
+  GenerationSession, GenerationSessionStatus, GenerationSessionCreateParams, GenerationSessionConnection, GenerationSessionOffer, GenerationSessionEvent,
+} from "./types/generation.js";

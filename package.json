@@ -1,7 +1,7 @@
 {
   "name": "qcloud-ai",
   "version": "0.2.0",
-  "description": "Official Node.js client for the QCloud AI inference API",
+  "description": "Official Node.js client for QCloud inference and model generation APIs",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

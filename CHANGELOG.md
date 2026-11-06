@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Generation session controls, single-use connection capabilities, and WebRTC signaling streams with explicit cleanup.
+- Transport-aware catalog types and references that preserve native OpenAPI dialects and incomplete-schema notices.
+- Universal generation catalog/schema discovery and durable job submit/status/result/cancel helpers.
+- Deadline/abort-aware polling, explicit metered consent, and stable submission recovery IDs.
+- Arbitrary JSON inputs and outputs; no automatic generation POST retries.
+- Per-model documentation renderer preserving schema references and license notices.
+- Local HTTP generation tests and cross-language backend contract coverage.
+
 ## 0.2.0
 
 - Backend HTTP contract tests for Python, TypeScript, streaming, cancellation and organization isolation.

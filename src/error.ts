@@ -1,4 +1,6 @@
 export class QCloudAIError extends Error {
+  /** Stable submission identity when a generation POST has an ambiguous result. */
+  clientRequestId?: string;
   constructor(message: string) {
     super(message);
     this.name = "QCloudAIError";
