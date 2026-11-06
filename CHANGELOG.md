@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- OpenAPI/AsyncAPI reference metadata and per-model documentation preserving native message contracts and explicit documentation gaps.
+- Discriminated WebRTC-over-WebSocket capabilities with native protocol validation.
 - Explicit stream-body cancellation preserves deadlines and caller aborts under Node.js garbage collection.
 - Generation session controls, single-use connection capabilities, and WebRTC signaling streams with explicit cleanup.
 - Transport-aware catalog types and references that preserve native OpenAPI dialects and incomplete-schema notices.

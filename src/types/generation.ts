@@ -11,6 +11,8 @@ export interface GenerationModel {
   transport: "queue" | "websocket" | "webrtc" | "unknown";
   queued_available: boolean;
   schema_available: boolean;
+  schema_format?: "openapi" | "asyncapi" | null;
+  reference_updated_at?: string;
   schema_complete?: boolean;
   schema_issues?: Array<{ code: string; reference?: string }>;
   license: { [key: string]: JSONValue } | null;
@@ -74,10 +76,19 @@ export interface GenerationSessionCreateParams {
   model: string; transport: "websocket" | "webrtc"; billing_mode: "metered";
   client_request_id?: string; max_duration_seconds?: number;
 }
-export type GenerationSessionConnection = {
-  transport: "websocket"; session_id?: string; websocket_url: string; token: string; expires_at: string;
+export interface GenerationWebSocketConnection {
+  transport: "websocket"; signaling?: "websocket"; session_id?: string; websocket_url: string; token: string; expires_at: string;
   subprotocols: string[]; encoding: "json" | "msgpack";
-} | { transport: "webrtc"; session_id?: string; url: string; token: string; expires_at: string };
+}
+export interface GenerationWebRTCConnection {
+  transport: "webrtc"; signaling?: "sse"; session_id?: string; url: string; token: string; expires_at: string;
+}
+/** Media travels through a peer connection; the socket carries model-specific signaling. */
+export interface GenerationWebRTCSignalingConnection {
+  transport: "webrtc"; signaling: "websocket"; protocol: "rtc-signaling-v1"; session_id?: string;
+  websocket_url: string; token: string; expires_at: string; subprotocols: string[]; encoding: "msgpack";
+}
+export type GenerationSessionConnection = GenerationWebSocketConnection | GenerationWebRTCConnection | GenerationWebRTCSignalingConnection;
 export interface GenerationSessionOffer { type: "offer"; sdp: string }
 export type GenerationSessionEvent = { event: "answer"; data: { session_id: string; type: "answer"; sdp: string } }
   | { event: "closed"; data: { session_id: string; reason: string } };

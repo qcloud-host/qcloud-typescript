@@ -55,4 +55,5 @@ export type {
   GenerationSchema, GenerationJobStatus, GenerationBilling, GenerationJob,
   GenerationSubmitParams, GenerationResult, GenerationPendingResult, GenerationSubscription,
   GenerationSession, GenerationSessionStatus, GenerationSessionCreateParams, GenerationSessionConnection, GenerationSessionOffer, GenerationSessionEvent,
+  GenerationWebSocketConnection, GenerationWebRTCConnection, GenerationWebRTCSignalingConnection,
 } from "./types/generation.js";

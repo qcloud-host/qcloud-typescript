@@ -11,6 +11,7 @@ function heading(value: string): string { return value.replace(/[\r\n]/g, " ").r
 export function renderGenerationModelReference(model: GenerationModel, schema: GenerationSchema | null): string {
   const id = JSON.stringify(model.id);
   const queued = model.transport === "queue";
+  const asynchronous = typeof schema?.asyncapi === "string";
   const python = [
     "import json", "from uuid import uuid4", "from qcloud_ai import QCloud", "",
     "client = QCloud()", "with open(\"input.json\", encoding=\"utf-8\") as file:", "    model_input = json.load(file)",
@@ -23,7 +24,7 @@ export function renderGenerationModelReference(model: GenerationModel, schema: G
   return [
     `# ${heading(model.display_name || model.id)}`, "", block(model.id, "text"), "",
     `Category: ${heading(model.category)}. Status: ${heading(model.status)}. Transport: ${heading(model.transport)}. Available: ${model.available ? "yes" : "no"}.`, "",
-    ...(model.schema_issues?.length ? ["The supplied model schema is incomplete. These unresolved references are preserved as evidence; no missing input definition is invented:", "", block(JSON.stringify(model.schema_issues, null, 2), "json"), ""] : []),
+    ...(model.schema_issues?.length ? ["The supplied reference has documented gaps. Missing definitions or negotiation contracts are not invented:", "", block(JSON.stringify(model.schema_issues, null, 2), "json"), ""] : []),
     schema === null
       ? "A detailed input/output schema is currently unavailable. Retrieve it before submitting a job. This reference preserves catalog metadata and license notices without inventing input fields."
       : queued ? "Use the exact input schema below to create `input.json`. Inputs and outputs vary by model; these examples do not invent required field values."
@@ -34,6 +35,8 @@ export function renderGenerationModelReference(model: GenerationModel, schema: G
     ] : ["This model does not support the QCloud queued-job API. Its transport requires a separate supported session API; the catalog reference and native schema do not imply execution availability.", ""]),
     "## License and notices", "", block(JSON.stringify(model.license, null, 2), "json"), "",
     "## Pricing metadata", "", block(JSON.stringify(model.pricing ?? null, null, 2), "json"), "",
-    "## Complete model schema", "", schema === null ? "Schema unavailable in this catalog snapshot." : "The complete OpenAPI document preserves component names, references, constraints, and model notices.", "", block(JSON.stringify(schema, null, 2), "json"), "",
+    "## Complete model schema", "", schema === null ? "Schema unavailable in this catalog snapshot." : asynchronous
+      ? "The AsyncAPI reference preserves native message schemas, media directions, sequencing, and wire identifiers. It does not supply an unavailable HTTP negotiation contract or prove an enabled signaling route."
+      : "The complete OpenAPI document preserves component names, references, constraints, and model notices.", "", block(JSON.stringify(schema, null, 2), "json"), "",
   ].join("\n");
 }

@@ -149,14 +149,26 @@ cancellation. `result(id)` returns a final `{job_id,data,billing}` or pending
 `{data:job}` response. New catalog models do not require an SDK update.
 
 `renderGenerationModelReference(model, schema)` generates a Markdown reference
-with generic examples, exact OpenAPI component references, and license notices.
+with generic examples, exact OpenAPI or AsyncAPI component references, and license notices.
+`schema_format` identifies the reference format; `reference_updated_at` dates its
+capture independently of the catalog refresh. `schema_issues` reports missing
+definitions or negotiation contracts without implying an enabled session route.
 
 `client.generation.sessions.create/retrieve/connect/close` manage explicitly
 enabled WebSocket/WebRTC sessions. Creation requires metered consent, transport,
 and a stable UUID; `max_duration_seconds` defaults to 300. `connect` returns a
 single-use capability, not an open socket. Keep tokens/subprotocols in memory
 and use the returned `encoding` for native frames. Never reconnect or replay
-frames automatically. `sessions.offer(id, {type:"offer", sdp}, {sessionToken})`
+frames automatically. Check `signaling` as well as `transport`: a WebRTC
+capability with `signaling: "websocket"` has `websocket_url`, `subprotocols`,
+`encoding: "msgpack"`, and `protocol: "rtc-signaling-v1"`. Use that socket for
+the model's signaling messages and a separate peer connection for media. Close
+both together and request `sessions.close(id)` during cleanup. Socket closure
+alone does not prove remote media stopped or billing was settled. The SDK
+returns the typed capability; it does not create or manage media peers.
+
+For `transport: "webrtc"` with `signaling: "sse"` (or the legacy omitted field),
+`sessions.offer(id, {type:"offer", sdp}, {sessionToken})`
 returns a WebRTC signaling async iterable; keep it open for the session lifetime
 and call `.close()` or break iteration to release it. Use a direct backend base
 URL for long-lived connections. Unexpected EOF and streamed errors are surfaced;
@@ -171,9 +183,9 @@ verified backend transport and is separate from catalog presence.
 | Legacy Completions                               | Available when the selected provider/model supports it      |
 | Generation models and jobs                      | Schema discovery, arbitrary JSON, durable jobs and polling |
 | OpenAI Responses, files, audio, realtime         | Not exposed by this SDK/backend release                     |
-| Native Anthropic Messages / Claude Code protocol | Not exposed by the current QCloud backend                   |
+| Anthropic Messages                              | Backend compatibility endpoint; use the official Anthropic client |
 
-Model availability and features are determined by the QCloud catalog and upstream provider. Use the QCloud model ID, which may differ from the provider's public model ID. Claude-family models can use Chat Completions when listed in QCloud; the native Anthropic SDK cannot simply be pointed at this endpoint. This library is maintained by QCloud and is not an OpenAI or Anthropic product.
+Model availability and features are determined by the QCloud catalog and upstream provider. Use the QCloud model ID, which may differ from the provider's public model ID. The backend also supports `/messages` with Anthropic version `2023-06-01` for compatible text, image, and tool requests. This QCloud SDK has no `messages` resource; use the official Anthropic client with `baseURL: "https://www.qcloud.host/api"` (it appends `/v1/messages`) and your QCloud key. Beta features and exact token counting are rejected, so this does not promise full Claude Code compatibility. This library is maintained by QCloud and is not an OpenAI or Anthropic product.
 
 ## Reliability
 

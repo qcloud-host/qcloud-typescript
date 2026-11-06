@@ -20,9 +20,10 @@ function connection(value: unknown, id: string): GenerationSessionConnection {
   const result = data(value);
   if (result.session_id !== undefined && result.session_id !== id) throw new APIResponseValidationError("Connection belongs to a different session");
   if (typeof result.token !== "string" || !result.token || typeof result.expires_at !== "string") throw new APIResponseValidationError("Invalid session capability");
-  if (result.transport === "websocket") {
-    if (typeof result.websocket_url !== "string" || !Array.isArray(result.subprotocols) || !result.subprotocols.every(item => typeof item === "string") || !["json", "msgpack"].includes(String(result.encoding))) throw new APIResponseValidationError("Invalid WebSocket session capability");
-  } else if (result.transport !== "webrtc" || typeof result.url !== "string") throw new APIResponseValidationError("Invalid WebRTC session capability");
+  if (result.transport === "websocket" || (result.transport === "webrtc" && result.signaling === "websocket")) {
+    if ((result.signaling !== undefined && result.signaling !== "websocket") || typeof result.websocket_url !== "string" || !result.websocket_url || !Array.isArray(result.subprotocols) || !result.subprotocols.length || !result.subprotocols.every(item => typeof item === "string" && item.length > 0) || !["json", "msgpack"].includes(String(result.encoding))) throw new APIResponseValidationError("Invalid WebSocket session capability");
+    if (result.transport === "webrtc" && (result.protocol !== "rtc-signaling-v1" || result.encoding !== "msgpack")) throw new APIResponseValidationError("Unsupported WebRTC signaling protocol");
+  } else if (result.transport !== "webrtc" || (result.signaling !== undefined && result.signaling !== "sse") || typeof result.url !== "string" || !result.url) throw new APIResponseValidationError("Invalid WebRTC session capability");
   return result as unknown as GenerationSessionConnection;
 }
 export class GenerationSessions {
