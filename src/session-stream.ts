@@ -1,5 +1,6 @@
 import { APIConnectionError, APIError, APIResponseValidationError } from "./error.js";
 import type { GenerationSessionEvent } from "./types/generation.js";
+import { bindStreamAbort } from "./stream-abort.js";
 
 /** A single-use WebRTC signaling stream. Closing it releases the server session. */
 export class GenerationSessionStream implements AsyncIterable<GenerationSessionEvent> {
@@ -7,10 +8,12 @@ export class GenerationSessionStream implements AsyncIterable<GenerationSessionE
   private consumed = false;
   private closed = false;
   private requestID?: string;
-  constructor(response: Response, readonly sessionId: string, private cleanup: () => void, private checkAbort: () => void) {
+  private unbindAbort: () => void;
+  constructor(response: Response, readonly sessionId: string, private cleanup: () => void, private checkAbort: () => void, signal?: AbortSignal) {
     if (!response.body) throw new APIResponseValidationError("Session stream has no body");
     this.reader = response.body.getReader();
     this.requestID = response.headers.get("x-request-id") ?? undefined;
+    this.unbindAbort = bindStreamAbort(this.reader, signal);
   }
   async *[Symbol.asyncIterator](): AsyncIterator<GenerationSessionEvent> {
     if (this.consumed) throw new Error("This stream has already been consumed");
@@ -21,6 +24,7 @@ export class GenerationSessionStream implements AsyncIterable<GenerationSessionE
       while (!this.closed) {
         this.checkAbort();
         const next = await this.reader.read();
+        this.checkAbort();
         buffer += next.done ? decoder.decode() : decoder.decode(next.value, { stream: true });
         if (buffer.length + size > 2_097_152) throw new APIResponseValidationError("Session event exceeds the size limit");
         let match: RegExpExecArray | null;
@@ -62,6 +66,7 @@ export class GenerationSessionStream implements AsyncIterable<GenerationSessionE
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.unbindAbort();
     try { await this.reader.cancel(); } catch { /* Keep the original error. */ }
     finally { this.reader.releaseLock(); this.cleanup(); }
   }

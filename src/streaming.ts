@@ -1,19 +1,23 @@
 import { APIConnectionError, APIError, APIResponseValidationError } from "./error.js";
+import { bindStreamAbort } from "./stream-abort.js";
 /** A single-use SSE stream. Breaking iteration cancels the HTTP body. */
 export class Stream<T> implements AsyncIterable<T> {
   private reader: ReadableStreamDefaultReader<Uint8Array>;
   private consumed = false;
   private closed = false;
   private requestID?: string;
+  private unbindAbort: () => void;
   constructor(
     response: Response,
     private cleanup: () => void = () => {},
     private checkAbort: () => void = () => {},
+    signal?: AbortSignal,
   ) {
     if (!response.body)
       throw new APIResponseValidationError("Streaming response has no body");
     this.reader = response.body.getReader();
     this.requestID = response.headers.get("x-request-id") ?? undefined;
+    this.unbindAbort = bindStreamAbort(this.reader, signal);
   }
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
     if (this.consumed) throw new Error("This stream has already been consumed");
@@ -46,6 +50,7 @@ export class Stream<T> implements AsyncIterable<T> {
       while (!this.closed) {
         this.checkAbort();
         const { value, done } = await this.reader.read();
+        this.checkAbort();
         buffer += done
           ? decoder.decode()
           : decoder.decode(value, { stream: true });
@@ -81,6 +86,7 @@ export class Stream<T> implements AsyncIterable<T> {
   async abort(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.unbindAbort();
     try {
       await this.reader.cancel();
     } catch {

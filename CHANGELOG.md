@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Explicit stream-body cancellation preserves deadlines and caller aborts under Node.js garbage collection.
 - Generation session controls, single-use connection capabilities, and WebRTC signaling streams with explicit cleanup.
 - Transport-aware catalog types and references that preserve native OpenAPI dialects and incomplete-schema notices.
 - Universal generation catalog/schema discovery and durable job submit/status/result/cancel helpers.

@@ -201,7 +201,7 @@ export class QCloudAI {
             if (opts?.signal?.aborted) throw opts.signal.reason;
             if (timedOut) throw new APITimeoutError();
           };
-          const stream = opts.sessionId ? new GenerationSessionStream(response, opts.sessionId, cleanup, checkAbort) : new Stream<unknown>(response, cleanup, checkAbort);
+          const stream = opts.sessionId ? new GenerationSessionStream(response, opts.sessionId, cleanup, checkAbort, controller.signal) : new Stream<unknown>(response, cleanup, checkAbort, controller.signal);
           streamOwnsCleanup = true;
           return stream as T;
         }
