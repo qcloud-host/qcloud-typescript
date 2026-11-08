@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { getEventListeners } from "node:events";
 import test from "node:test";
 import { QCloud, GenerationJobError, GenerationTimeoutError, GenerationPendingResult, APIError, APIResponseValidationError, renderGenerationModelReference } from "../src/index.js";
 import type { GenerationJob, GenerationModel } from "../src/index.js";
@@ -47,6 +48,72 @@ test("model references preserve historical provenance and creator notices withou
 test("generic submit, pending results, subscribe and explicit cancellation preserve JSON",async()=>{const f=await fixture();try{const requestId=randomUUID(),input={arbitrary:[true,null,123,{text:"こんにちは"}]};const submitted=await f.client.generation.jobs.submit({model:modelId,input,billing_mode:"metered",client_request_id:requestId});assert.equal(submitted.id,f.id);assert.deepEqual(f.state.bodies[0],{model:modelId,input,billing_mode:"metered",client_request_id:requestId});const pending=await f.client.generation.jobs.result(f.id);assert.ok(!("job_id"in pending));assert.equal((pending as GenerationPendingResult).data.status,"running");const result=await f.client.generation.jobs.subscribe({model:modelId,input:null,billing_mode:"metered"},{pollIntervalMs:5,timeoutMs:1000});assert.deepEqual(result.result.data,[{nested:{ok:true}},null,42,"🌍"]);assert.equal(result.job.id,f.id);assert.equal((await f.client.generation.jobs.cancel(f.id)).status,"cancelled");assert.equal(f.state.cancels,1);}finally{await f.close();}});
 test("terminal failures retain the job and do not request cancellation",async()=>{for(const status of ["failed","cancelled","review"] as const){const f=await fixture();try{f.state.terminal=status;await assert.rejects(f.client.generation.jobs.wait(f.id,{pollIntervalMs:1,timeoutMs:1000}),e=>e instanceof GenerationJobError&&e.job.status===status&&e.job.id===f.id);assert.equal(f.state.cancels,0);}finally{await f.close();}}});
 test("poll deadline and abort stop in-flight HTTP without cancelling the job",async()=>{const f=await fixture();try{f.state.stall=true;const started=Date.now();await assert.rejects(f.client.generation.jobs.wait(f.id,{timeoutMs:40}),e=>e instanceof GenerationTimeoutError&&e.jobId===f.id);assert.ok(Date.now()-started<500);const controller=new AbortController();const pending=f.client.generation.jobs.wait(f.id,{signal:controller.signal,timeoutMs:1000});setTimeout(()=>controller.abort(new Error("caller stopped")),20);await assert.rejects(pending,/caller stopped/);assert.equal(f.state.cancels,0);}finally{await f.close();}});
+
+async function withoutAbortSignalAny(run: () => Promise<void>) {
+  const original = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+  Object.defineProperty(AbortSignal, "any", { configurable: true, value: undefined });
+  try { await run(); } finally {
+    if (original) Object.defineProperty(AbortSignal, "any", original);
+    else Reflect.deleteProperty(AbortSignal, "any");
+  }
+}
+test("Node 20 polling without AbortSignal.any completes and releases caller listeners", async () => {
+  await withoutAbortSignalAny(async () => {
+    const f = await fixture(), controller = new AbortController();
+    try {
+      const options = { signal: controller.signal, pollIntervalMs: 1, timeoutMs: 1000 };
+      assert.equal((await f.client.generation.jobs.wait(f.id, options)).id, f.id);
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+      const result = await f.client.generation.jobs.subscribe({ model: modelId, input: null, billing_mode: "metered" }, options);
+      assert.equal(result.job.id, f.id); assert.equal(f.state.posts, 1);
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+      f.state.terminal = "failed";
+      await assert.rejects(f.client.generation.jobs.wait(f.id, options), GenerationJobError);
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+    } finally { await f.close(); }
+  });
+});
+test("Node 20 caller cancellation without AbortSignal.any preserves reason and never cancels the remote job", async () => {
+  await withoutAbortSignalAny(async () => {
+    for (const subscribe of [false, true]) {
+      const f = await fixture();
+      const invoke = (signal: AbortSignal) => subscribe
+        ? f.client.generation.jobs.subscribe({ model: modelId, input: null, billing_mode: "metered" }, { signal, timeoutMs: 1000 })
+        : f.client.generation.jobs.wait(f.id, { signal, timeoutMs: 1000 });
+      try {
+        const reason = new Error("caller cancellation fixture"), early = new AbortController(); early.abort(reason);
+        await assert.rejects(invoke(early.signal), error => error === reason);
+        assert.deepEqual(f.state.urls, []); assert.equal(getEventListeners(early.signal, "abort").length, 0);
+        f.state.stall = true;
+        const controller = new AbortController(), pending = invoke(controller.signal);
+        const deadline = Date.now() + 1000;
+        while (!f.state.urls.some(url => url === `/v1/generation/jobs/${f.id}`) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2));
+        assert.ok(f.state.urls.some(url => url === `/v1/generation/jobs/${f.id}`));
+        assert.equal(getEventListeners(controller.signal, "abort").length, 1);
+        controller.abort(reason); await assert.rejects(pending, error => error === reason);
+        assert.equal(getEventListeners(controller.signal, "abort").length, 0); assert.equal(f.state.cancels, 0);
+        assert.equal(f.state.posts, subscribe ? 1 : 0);
+      } finally { await f.close(); }
+    }
+  });
+});
+test("Node 20 deadline without AbortSignal.any releases listeners and keeps submission identity", async () => {
+  await withoutAbortSignalAny(async () => {
+    for (const subscribe of [false, true]) {
+      const f = await fixture(), controller = new AbortController(), requestId = randomUUID();
+      try {
+        f.state.stall = true;
+        const options = { signal: controller.signal, timeoutMs: 60 }, start = Date.now();
+        const pending = subscribe
+          ? f.client.generation.jobs.subscribe({ model: modelId, input: null, billing_mode: "metered", client_request_id: requestId }, options)
+          : f.client.generation.jobs.wait(f.id, options);
+        await assert.rejects(pending, error => error instanceof GenerationTimeoutError && error.jobId === f.id && (!subscribe || error.clientRequestId === requestId));
+        assert.ok(Date.now() - start < 1000); assert.equal(controller.signal.aborted, false);
+        assert.equal(getEventListeners(controller.signal, "abort").length, 0); assert.equal(f.state.cancels, 0);
+      } finally { await f.close(); }
+    }
+  });
+});
 test("submission failures retain retry identity and never auto-replay billed POST",async()=>{for(const status of [429,503]){const f=await fixture();try{f.state.failure=status;const id=randomUUID();await assert.rejects(f.client.generation.jobs.submit({model:modelId,input:[],billing_mode:"metered",client_request_id:id}),e=>e instanceof APIError&&e.status===status&&e.clientRequestId===id);assert.equal(f.state.posts,1);}finally{await f.close();}}});
 test("invalid consent/JSON fails locally; response identity mismatches fail closed",async()=>{const f=await fixture();try{await assert.rejects(f.client.generation.jobs.submit({model:modelId,input:NaN,billing_mode:"metered"}),/JSON/);await assert.rejects(f.client.generation.jobs.submit({model:modelId,input:null,billing_mode:"free" as "metered"}),/metered/);assert.equal(f.state.posts,0);f.state.mismatch=true;await assert.rejects(f.client.generation.jobs.retrieve(f.id),APIResponseValidationError);await assert.rejects(f.client.generation.jobs.wait(f.id,{timeoutMs:1000}),APIResponseValidationError);f.state.resultReads=1;await assert.rejects(f.client.generation.jobs.result(f.id),APIResponseValidationError);}finally{await f.close();}});
 

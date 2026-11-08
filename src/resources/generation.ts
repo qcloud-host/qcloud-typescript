@@ -57,6 +57,15 @@ async function delay(ms: number, signal: AbortSignal) {
     signal.addEventListener("abort", abort, { once: true });
   });
 }
+/** Relay one caller signal into the owned deadline controller, including Node
+ * 20.0-20.2 where AbortSignal.any is unavailable. Always release the listener. */
+function followAbort(controller: AbortController, signal?: AbortSignal): () => void {
+  if (!signal) return () => {};
+  const abort = () => controller.abort(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  return () => signal.removeEventListener("abort", abort);
+}
 export class GenerationModels {
   constructor(private client: QCloudAI) {}
   list(params: GenerationModelListParams = {}, options?: RequestOptions): Promise<GenerationModelList> {
@@ -106,16 +115,17 @@ export class GenerationJobs {
   async wait(id: string, options: GenerationPollOptions = {}): Promise<GenerationJob> {
     id = normalizeUuid(id, "job ID"); const { timeout, interval } = pollOptions(options);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new GenerationTimeoutError(id)), timeout);
-    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
-    try { return await this.poll(id, options, signal, interval); } finally { clearTimeout(timer); }
+    const unfollow = followAbort(controller, options.signal);
+    const timer = setTimeout(() => { controller.abort(new GenerationTimeoutError(id)); unfollow(); }, timeout);
+    try { return await this.poll(id, options, controller.signal, interval); } finally { clearTimeout(timer); unfollow(); }
   }
   async subscribe<T = JSONValue>(params: GenerationSubmitParams, options: GenerationPollOptions = {}): Promise<GenerationSubscription<T>> {
     const { timeout, interval } = pollOptions(options), requestId = normalizeUuid(params.client_request_id ?? randomUUID(), "client_request_id");
     let jobId: string | undefined;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new GenerationTimeoutError(jobId, requestId)), timeout);
-    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+    const unfollow = followAbort(controller, options.signal);
+    const timer = setTimeout(() => { controller.abort(new GenerationTimeoutError(jobId, requestId)); unfollow(); }, timeout);
+    const signal = controller.signal;
     try {
       const submitted = await this.submit({ ...params, client_request_id: requestId }, { ...options, signal }); jobId = submitted.id;
       for (;;) {
@@ -124,7 +134,7 @@ export class GenerationJobs {
         if ("job_id" in output) return { job: completed, result: output };
         await delay(interval, signal);
       }
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); unfollow(); }
   }
 }
 export class Generation {
