@@ -1,6 +1,8 @@
 import type { QCloudAI } from "../client.js";
 import { GenerationFile, MAX_DOWNLOAD_BYTES } from "../download.js";
 import { normalizeUuid } from "../uuid.js";
+import type { GenerationUploadOptions, GenerationUploadSource } from "../upload.js";
+import type { GenerationUploadedFile } from "../types/generation.js";
 
 export interface GenerationDownloadOptions {
   signal?: AbortSignal;
@@ -14,6 +16,9 @@ export interface GenerationDownloadOptions {
 
 export class GenerationFiles {
   constructor(private client: QCloudAI) {}
+  upload(source: GenerationUploadSource, options?: GenerationUploadOptions): Promise<GenerationUploadedFile> {
+    return this.client._upload(source, options);
+  }
   download(jobId: string, assetId: string, options: GenerationDownloadOptions = {}): Promise<GenerationFile> {
     jobId = normalizeUuid(jobId, "job ID"); assetId = normalizeUuid(assetId, "asset ID");
     const maxBytes = options.maxBytes ?? MAX_DOWNLOAD_BYTES;

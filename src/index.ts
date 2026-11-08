@@ -51,9 +51,10 @@ export { renderGenerationModelReference } from "./generation-docs.js";
 export { GenerationSessionStream } from "./session-stream.js";
 export { GenerationFile } from "./download.js";
 export type { GenerationDownloadOptions } from "./resources/generation-files.js";
+export type { GenerationUploadOptions, GenerationUploadSource } from "./upload.js";
 export type { GenerationPollOptions } from "./resources/generation.js";
 export type {
-  JSONValue, GenerationModel, GenerationModelList, GenerationModelListParams,
+  JSONValue, GenerationUploadedFile, GenerationModel, GenerationModelList, GenerationModelListParams,
   GenerationSchema, GenerationJobStatus, GenerationBilling, GenerationJob,
   GenerationSubmitParams, GenerationResult, GenerationPendingResult, GenerationSubscription,
   GenerationSession, GenerationSessionStatus, GenerationSessionCreateParams, GenerationSessionConnection, GenerationSessionOffer, GenerationSessionEvent,

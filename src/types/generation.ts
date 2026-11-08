@@ -92,3 +92,15 @@ export type GenerationSessionConnection = GenerationWebSocketConnection | Genera
 export interface GenerationSessionOffer { type: "offer"; sdp: string }
 export type GenerationSessionEvent = { event: "answer"; data: { session_id: string; type: "answer"; sdp: string } }
   | { event: "closed"; data: { session_id: string; reason: string } };
+/** A private input reference resolved by QCloud when dispatching a model request. */
+export interface GenerationUploadedFile {
+  id: string;
+  object: "generation.file";
+  url: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+  expires_at: string;
+}

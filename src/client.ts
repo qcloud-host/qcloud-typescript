@@ -12,6 +12,7 @@ import {
 import { Stream } from "./streaming.js";
 import { GenerationSessionStream } from "./session-stream.js";
 import { GenerationFile, downloadError } from "./download.js";
+import { uploadFile, type GenerationUploadOptions, type GenerationUploadSource } from "./upload.js";
 
 export const SDK_VERSION = "0.2.0";
 export interface RequestOptions {
@@ -126,6 +127,10 @@ export class QCloudAI {
       ...(this.organization ? { "X-QCloud-Organization": this.organization } : {}),
       ...this._defaultHeaders,
     };
+  }
+  /** @internal Upload transport is separate from JSON and streaming downloads. */
+  _upload(source: GenerationUploadSource, options?: GenerationUploadOptions) {
+    return uploadFile({ baseURL: this.baseURL, headers: this._buildHeaders(), fetch: this._fetch }, source, options);
   }
   /** @internal */
   async _request<T>(

@@ -148,6 +148,45 @@ stops the client only; call `jobs.cancel(id)` explicitly for best-effort server
 cancellation. `result(id)` returns a final `{job_id,data,billing}` or pending
 `{data:job}` response. New catalog models do not require an SDK update.
 
+### Upload local model inputs
+
+```ts
+const inputFile = await client.generation.files.upload({ path: "input.png" }, {
+  contentType: "image/png", maxBytes: 32 * 1024 * 1024,
+});
+// Use this reference in the field required by your chosen model's schema:
+const modelInput = { image_url: inputFile.url };
+```
+
+`upload` accepts `Uint8Array`/`Buffer`, `{path: "local/file"}`, or an async byte
+iterable (including Node readable streams). Paths must be regular files; URLs
+are rejected. Bytes and streams default to `filename: "upload.bin"`; override it
+with a basename and set `contentType` to a bare MIME type (normalized to lowercase).
+No multipart or base64
+encoding is needed. The SDK streams chunks of at most 64 KiB and verifies the
+returned size and SHA-256. It never buffers the whole file.
+
+`maxBytes` defaults to 256 MiB. The backend's configured limit may be lower
+(default 64 MiB); this option cannot raise it. `size` optionally declares an
+exact stream length. `timeout` defaults to 120000 milliseconds across source,
+request and response delivery; `signal` cancels the request. SDK-opened files
+are closed; supplied stream iterators receive `return()` on exit and should
+cooperate with cancellation. Uploads never retry, including after partial
+delivery. A lost response may have left an uploaded file; do not assume failure
+means nothing was stored.
+
+The returned `GenerationUploadedFile` contains `id`, `url`, `filename`,
+`content_type`, `size_bytes`, `sha256`, `created_at`, and `expires_at`.
+Its `qcloud://files/<UUID>` URL is an opaque private input reference. QCloud
+validates your organization's access and resolves it when dispatching a model.
+It is not a browser URL or a provider credential. Expiry limits the QCloud
+reference's lifetime, not a guarantee of physical deletion from upstream storage.
+Underlying processing storage uses unguessable, publicly readable CDN links.
+Private QCloud references and access checks do not make those objects private;
+anyone who obtains an upstream link can read its file.
+The backend must enable uploads and your key needs `generation:invoke`.
+Uploading alone does not submit a model job or enable generation.
+
 ### Download generated files
 
 Generated media URLs require your QCloud key. Use the job UUID and the final asset

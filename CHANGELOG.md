@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stream local files, bytes, and async byte sources into private generation input references with size/hash validation, cancellation and no retries.
+
 - Authenticated generated-file downloads with bounded binary streaming, byte ranges, timeout/abort cleanup and no automatic retries or file writes.
 
 - OpenAPI/AsyncAPI reference metadata and per-model documentation preserving native message contracts and explicit documentation gaps.
