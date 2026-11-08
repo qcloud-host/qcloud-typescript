@@ -12,7 +12,12 @@ export interface GenerationModel {
   queued_available: boolean;
   schema_available: boolean;
   schema_format?: "openapi" | "asyncapi" | null;
-  reference_updated_at?: string;
+  /** Missing on older snapshots; retained contracts are historical and cannot execute. */
+  reference_status?: "current" | "retained" | "unavailable";
+  reference_stale?: boolean;
+  reference_checked_at?: string | null;
+  reference_updated_at?: string | null;
+  reference_issue?: "upstream_reference_unavailable" | null;
   schema_complete?: boolean;
   schema_issues?: Array<{ code: string; reference?: string }>;
   license: { [key: string]: JSONValue } | null;
@@ -26,7 +31,7 @@ export interface GenerationModelList {
   data: GenerationModel[];
   has_more: boolean;
   next_cursor: string | null;
-  catalog: { last_updated_at: string | null; stale: boolean; total: number };
+  catalog: { last_updated_at: string | null; stale: boolean; total: number; degraded?: boolean; quarantined_count?: number };
 }
 export interface GenerationModelListParams { q?: string; category?: string; status?: string; limit?: number; cursor?: string }
 export type GenerationSchema = Record<string, unknown>;

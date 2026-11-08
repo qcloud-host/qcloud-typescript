@@ -24,6 +24,26 @@ async function fixture(){
   return {id,state,client,close:()=>new Promise<void>(r=>{server.closeAllConnections();server.close(()=>r());})};
 }
 test("generation discovery encodes IDs once and preserves full schemas/notices",async()=>{const f=await fixture();try{assert.equal((await f.client.generation.models.list({q:"a b",category:"image-to-video",limit:3})).data[0].id,modelId);assert.match(f.state.urls[0],/q=a\+b/);assert.equal((await f.client.generation.models.retrieve(modelId)).id,modelId);assert.deepEqual(await f.client.generation.models.schema(modelId),schema);assert.ok(f.state.urls.some(u=>u.includes("qcloud%2Ftest%2Fnested/schema")));const reference=renderGenerationModelReference(model,schema);assert.ok(reference.includes("#/components/schemas/Arbitrary"));assert.ok(reference.includes("Preserve this notice"));assert.ok(reference.includes('billing_mode: "metered"'));}finally{await f.close();}});
+
+test("model references preserve historical provenance and creator notices without runnable examples", () => {
+  const captured = "2026-11-01T10:00:00Z", checked = "2026-11-08T10:00:00Z";
+  const retained: GenerationModel = { ...model, description: "Developed by fal.ai and Example Studio.", reference_status: "retained", reference_stale: true,
+    reference_updated_at: captured, reference_checked_at: checked, reference_issue: "upstream_reference_unavailable", available: false, queued_available: false };
+  const document = { ...schema, "x-qcloud-model": retained, info: { ...schema.info, license: { name: "Original terms", url: "https://creator.example/license" } } };
+  const text = renderGenerationModelReference(retained, document);
+  assert.match(text, /Historical reference retained/); assert.match(text, /does not establish that the model was retired/);
+  assert.ok(text.includes(captured) && text.includes(checked)); assert.ok(text.includes(retained.description));
+  assert.ok(text.includes("Preserve this notice") && text.includes("https://creator.example/license"));
+  assert.ok(!text.includes("client.generation.jobs.subscribe")); assert.ok(text.includes(JSON.stringify(document, null, 2)));
+  // A newer schema can reveal quarantine after a list response was captured.
+  assert.ok(!renderGenerationModelReference(model, document).includes("client.generation.jobs.subscribe"));
+  for (const candidate of [{ ...model, reference_status: "unavailable" as const }, { ...model, reference_stale: true }]) {
+    assert.ok(!renderGenerationModelReference(candidate, schema).includes("client.generation.jobs.subscribe"));
+  }
+  assert.ok(!renderGenerationModelReference(model, null).includes("client.generation.jobs.subscribe"));
+  const restored: GenerationModel = { ...model, reference_status: "current", reference_stale: false };
+  assert.ok(renderGenerationModelReference(restored, { ...schema, "x-qcloud-model": restored }).includes("client.generation.jobs.subscribe"));
+});
 test("generic submit, pending results, subscribe and explicit cancellation preserve JSON",async()=>{const f=await fixture();try{const requestId=randomUUID(),input={arbitrary:[true,null,123,{text:"こんにちは"}]};const submitted=await f.client.generation.jobs.submit({model:modelId,input,billing_mode:"metered",client_request_id:requestId});assert.equal(submitted.id,f.id);assert.deepEqual(f.state.bodies[0],{model:modelId,input,billing_mode:"metered",client_request_id:requestId});const pending=await f.client.generation.jobs.result(f.id);assert.ok(!("job_id"in pending));assert.equal((pending as GenerationPendingResult).data.status,"running");const result=await f.client.generation.jobs.subscribe({model:modelId,input:null,billing_mode:"metered"},{pollIntervalMs:5,timeoutMs:1000});assert.deepEqual(result.result.data,[{nested:{ok:true}},null,42,"🌍"]);assert.equal(result.job.id,f.id);assert.equal((await f.client.generation.jobs.cancel(f.id)).status,"cancelled");assert.equal(f.state.cancels,1);}finally{await f.close();}});
 test("terminal failures retain the job and do not request cancellation",async()=>{for(const status of ["failed","cancelled","review"] as const){const f=await fixture();try{f.state.terminal=status;await assert.rejects(f.client.generation.jobs.wait(f.id,{pollIntervalMs:1,timeoutMs:1000}),e=>e instanceof GenerationJobError&&e.job.status===status&&e.job.id===f.id);assert.equal(f.state.cancels,0);}finally{await f.close();}}});
 test("poll deadline and abort stop in-flight HTTP without cancelling the job",async()=>{const f=await fixture();try{f.state.stall=true;const started=Date.now();await assert.rejects(f.client.generation.jobs.wait(f.id,{timeoutMs:40}),e=>e instanceof GenerationTimeoutError&&e.jobId===f.id);assert.ok(Date.now()-started<500);const controller=new AbortController();const pending=f.client.generation.jobs.wait(f.id,{signal:controller.signal,timeoutMs:1000});setTimeout(()=>controller.abort(new Error("caller stopped")),20);await assert.rejects(pending,/caller stopped/);assert.equal(f.state.cancels,0);}finally{await f.close();}});

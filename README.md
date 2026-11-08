@@ -122,7 +122,7 @@ See [examples](examples) for tools and JSON output. Tests inject local HTTP tran
 ## API coverage
 
 `client.generation.models.list()`, `.retrieve(id)`, and `.schema(id)` discover the
-generation catalog and its complete per-model contracts. `client.generation.jobs`
+generation catalog and its captured per-model references. `client.generation.jobs`
 supports `submit`, `retrieve`, `result`, `cancel`, `wait`, and `subscribe` for any
 schema-defined JSON input/output on queued models. Catalog models expose
 `transport`, `queued_available`, and `schema_available`. Check
@@ -147,6 +147,16 @@ job; `GenerationTimeoutError` retains `jobId`. AbortSignal or a polling timeout
 stops the client only; call `jobs.cancel(id)` explicitly for best-effort server
 cancellation. `result(id)` returns a final `{job_id,data,billing}` or pending
 `{data:job}` response. New catalog models do not require an SDK update.
+
+Catalog models include `reference_status` (`current`, `retained`, or `unavailable`),
+`reference_stale`, and separate `reference_updated_at` / `reference_checked_at`
+timestamps. A retained contract keeps its original capture date and creator/license
+notices; it is historical documentation, and cannot start new jobs or sessions.
+`catalog.degraded` and `catalog.quarantined_count` report affected models while
+healthy references continue to refresh. Require `queued_available: true` before
+submitting a queued job. `renderGenerationModelReference` omits runnable examples
+when either model metadata or the schema marks the reference historical or stale.
+Older snapshots may omit these fields; omission does not establish availability.
 
 ### Upload local model inputs
 
@@ -178,7 +188,8 @@ means nothing was stored.
 The returned `GenerationUploadedFile` contains `id`, `url`, `filename`,
 `content_type`, `size_bytes`, `sha256`, `created_at`, and `expires_at`.
 Its `qcloud://files/<UUID>` URL is an opaque private input reference. QCloud
-validates your organization's access and resolves it when dispatching a model.
+validates your organization's access and resolves it when dispatching a queued job.
+Native WebSocket/WebRTC messages do not resolve these references.
 It is not a browser URL or a provider credential. Expiry limits the QCloud
 reference's lifetime, not a guarantee of physical deletion from upstream storage.
 Underlying processing storage uses unguessable, publicly readable CDN links.
@@ -186,6 +197,20 @@ Private QCloud references and access checks do not make those objects private;
 anyone who obtains an upstream link can read its file.
 The backend must enable uploads and your key needs `generation:invoke`.
 Uploading alone does not submit a model job or enable generation.
+
+Read an upload's metadata later using its saved UUID:
+
+```ts
+const metadata = await client.generation.files.retrieve(inputFile.id);
+console.log(metadata.filename, metadata.size_bytes, metadata.expires_at);
+```
+
+This requires `generation:read` in the same organization and returns a validated
+`GenerationUploadedFile`, not file bytes. Pass a UUID, never a returned URL.
+Missing or foreign uploads return `NotFoundError`; an expired upload returns
+`APIError` with `status === 410`. The stored SHA-256 describes the uploaded bytes;
+a metadata read does not download and hash them again. Standard request options
+include `signal` and `timeout` (milliseconds).
 
 ### Download generated files
 
