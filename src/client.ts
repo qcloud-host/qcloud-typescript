@@ -11,6 +11,7 @@ import {
 } from "./error.js";
 import { Stream } from "./streaming.js";
 import { GenerationSessionStream } from "./session-stream.js";
+import { GenerationFile, downloadError } from "./download.js";
 
 export const SDK_VERSION = "0.2.0";
 export interface RequestOptions {
@@ -130,7 +131,7 @@ export class QCloudAI {
   async _request<T>(
     method: string,
     path: string,
-    opts?: RequestOptions & { body?: unknown; stream?: boolean; sessionId?: string },
+    opts?: RequestOptions & { body?: unknown; stream?: boolean; sessionId?: string; binary?: { jobId: string; assetId: string; maxBytes: number } },
   ): Promise<T> {
     const body =
       opts?.body === undefined ? undefined : JSON.stringify(opts.body);
@@ -163,6 +164,7 @@ export class QCloudAI {
           redirect: "error",
         });
         if (!response.ok) {
+          if (opts?.binary) await downloadError(response, controller.signal);
           if (
             attempt < maxRetries &&
             (response.status === 429 ||
@@ -187,6 +189,17 @@ export class QCloudAI {
             data,
             response.headers.get("x-request-id") ?? undefined,
           );
+        }
+        if (opts?.binary) {
+          const checkAbort = () => {
+            if (opts?.signal?.aborted) throw opts.signal.reason;
+            if (timedOut) throw new APITimeoutError();
+          };
+          try {
+            const download = new GenerationFile(response, opts.binary.jobId, opts.binary.assetId, opts.binary.maxBytes, cleanup, checkAbort, controller.signal);
+            streamOwnsCleanup = true;
+            return download as T;
+          } catch (error) { await response.body?.cancel().catch(() => {}); throw error; }
         }
         if (opts?.stream) {
           if (

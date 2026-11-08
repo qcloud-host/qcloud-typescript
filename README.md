@@ -148,6 +148,46 @@ stops the client only; call `jobs.cancel(id)` explicitly for best-effort server
 cancellation. `result(id)` returns a final `{job_id,data,billing}` or pending
 `{data:job}` response. New catalog models do not require an SDK update.
 
+### Download generated files
+
+Generated media URLs require your QCloud key. Use the job UUID and the final asset
+UUID in that URL with `client.generation.files.download(jobId, assetId)`; the SDK
+constructs the route on its configured API origin. It never fetches an arbitrary
+returned URL or follows a redirect with your key.
+
+```ts
+import { createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+// This model's result contains images[].url. Other model schemas may differ.
+const result = completed.result;
+const imageOutput = result.data as { images: Array<{ url: string }> };
+const mediaUrl = new URL(imageOutput.images[0].url);
+const assetId = mediaUrl.pathname.split("/").at(-1)!;
+const jobId = result.job_id;
+const file = await client.generation.files.download(jobId, assetId, {
+  maxBytes: 64 * 1024 * 1024,
+  timeout: 120_000,
+});
+try {
+  // wx refuses to overwrite an existing file. Choose the path yourself.
+  await pipeline(Readable.from(file), createWriteStream("output.bin", { flags: "wx" }));
+} finally {
+  await file.close();
+}
+```
+
+The single-use async iterable yields binary chunks of at most 64 KiB. It exposes
+`contentType`, `contentLength`, `contentRange`, `acceptRanges`, `status`,
+`requestID`, and `bytesRead`; it does not derive a filename or write files itself.
+`maxBytes` defaults to 256 MiB and can be lowered. `range: "bytes=0-1023"` requests
+one byte range; inspect `status` and `contentRange` because a server can ignore a
+range. `timeout` covers headers, body delivery and consumer pauses. Pass `signal`
+to cancel; breaking iteration or `close()` releases the response. Downloads never
+retry automatically, including after partial delivery. An error may leave a
+partial file in caller-owned output; decide whether to retain or remove it.
+
 `renderGenerationModelReference(model, schema)` generates a Markdown reference
 with generic examples, exact OpenAPI or AsyncAPI component references, and license notices.
 `schema_format` identifies the reference format; `reference_updated_at` dates its
@@ -182,6 +222,7 @@ verified backend transport and is separate from catalog presence.
 | Embeddings                                       | Create embeddings with a supported model                    |
 | Legacy Completions                               | Available when the selected provider/model supports it      |
 | Generation models and jobs                      | Schema discovery, arbitrary JSON, durable jobs and polling |
+| Generated files                                 | Authenticated binary streaming and single byte ranges       |
 | OpenAI Responses, files, audio, realtime         | Not exposed by this SDK/backend release                     |
 | Anthropic Messages                              | Backend compatibility endpoint; use the official Anthropic client |
 

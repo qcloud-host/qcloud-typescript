@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Authenticated generated-file downloads with bounded binary streaming, byte ranges, timeout/abort cleanup and no automatic retries or file writes.
+
 - OpenAPI/AsyncAPI reference metadata and per-model documentation preserving native message contracts and explicit documentation gaps.
 - Discriminated WebRTC-over-WebSocket capabilities with native protocol validation.
 - Explicit stream-body cancellation preserves deadlines and caller aborts under Node.js garbage collection.

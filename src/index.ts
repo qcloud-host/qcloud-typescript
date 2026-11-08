@@ -49,6 +49,8 @@ export { QCloudAI as QCloud } from "./client.js";
 export { GenerationJobError, GenerationTimeoutError } from "./resources/generation.js";
 export { renderGenerationModelReference } from "./generation-docs.js";
 export { GenerationSessionStream } from "./session-stream.js";
+export { GenerationFile } from "./download.js";
+export type { GenerationDownloadOptions } from "./resources/generation-files.js";
 export type { GenerationPollOptions } from "./resources/generation.js";
 export type {
   JSONValue, GenerationModel, GenerationModelList, GenerationModelListParams,

@@ -4,6 +4,7 @@ import { APIResponseValidationError, APITimeoutError, QCloudAIError } from "../e
 import type { GenerationJob, GenerationJobStatus, GenerationModel, GenerationModelList, GenerationModelListParams, GenerationPendingResult, GenerationResult, GenerationSchema, GenerationSubmitParams, GenerationSubscription, JSONValue } from "../types/generation.js";
 import { GenerationSessions } from "./generation-sessions.js";
 import { normalizeUuid } from "../uuid.js";
+import { GenerationFiles } from "./generation-files.js";
 
 const statuses = new Set<GenerationJobStatus>(["queued", "submitting", "running", "succeeded", "failed", "cancelled", "review"]);
 function pathId(value: string): string {
@@ -130,5 +131,6 @@ export class Generation {
   readonly models: GenerationModels;
   readonly jobs: GenerationJobs;
   readonly sessions: GenerationSessions;
-  constructor(client: QCloudAI) { this.models = new GenerationModels(client); this.jobs = new GenerationJobs(client); this.sessions = new GenerationSessions(client); }
+  readonly files: GenerationFiles;
+  constructor(client: QCloudAI) { this.models = new GenerationModels(client); this.jobs = new GenerationJobs(client); this.sessions = new GenerationSessions(client); this.files = new GenerationFiles(client); }
 }
