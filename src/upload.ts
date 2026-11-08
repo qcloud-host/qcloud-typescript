@@ -109,7 +109,27 @@ export async function uploadFile(
         if (bytes.byteLength > maxBytes - sent || (size !== undefined && bytes.byteLength > size - sent)) throw new TypeError("Upload exceeds its declared size or maxBytes");
         for (let offset = 0; offset < bytes.byteLength; offset += CHUNK) {
           checkAbort(); if (closed) return;
-          const chunk = bytes.subarray(offset, offset + CHUNK); hash.update(chunk); sent += chunk.byteLength; yield chunk;
+          let chunk = bytes.subarray(offset, offset + CHUNK);
+          if (size !== undefined && sent + chunk.byteLength === size) {
+            // A Content-Length receiver can reply as soon as it gets the last byte,
+            // without pulling our stream again. Verify EOF and finalize the receipt
+            // first. Advancing a caller iterator may reuse its buffer, so retain only
+            // an owned copy of this final (at most 64 KiB) slice while checking EOF.
+            chunk = Uint8Array.from(chunk);
+            while (true) {
+              checkAbort(); if (closed) return;
+              const tail = await inputIterator!.next();
+              checkAbort(); if (closed) return;
+              if (tail.done) break;
+              if (!(tail.value instanceof Uint8Array)) throw new TypeError("upload streams must yield Uint8Array chunks");
+              if (tail.value.byteLength) throw new TypeError("Upload exceeds its declared size or maxBytes");
+            }
+            hash.update(chunk); sent += chunk.byteLength;
+            sha256 = hash.digest("hex"); complete = true;
+            yield chunk;
+            return;
+          }
+          hash.update(chunk); sent += chunk.byteLength; yield chunk;
         }
       }
       checkAbort();

@@ -75,6 +75,99 @@ test("input validation precedes HTTP and upload-controlled headers override cust
   await sdk.generation.files.upload(bytes);assert.equal(requests,1);
 });
 
+// Model a server that answers immediately at Content-Length, without requesting
+// another source chunk. This deterministically exercises the final EOF race.
+function earlyReceipt(onBytes: (body: Buffer) => void = () => {}) {
+  return new QCloud({ apiKey: "fixture", fetch: async (_url, options) => {
+    const headers = new Headers(options?.headers), size = Number(headers.get("content-length"));
+    assert.ok(size > 0);
+    const reader = (options!.body as ReadableStream<Uint8Array>).getReader();
+    const chunks: Buffer[] = []; let length = 0;
+    try {
+      while (length < size) {
+        const next = await reader.read(); assert.equal(next.done, false);
+        assert.ok(next.value!.length <= 65536);
+        chunks.push(Buffer.from(next.value!)); length += next.value!.length;
+      }
+      assert.equal(length, size); onBytes(Buffer.concat(chunks));
+      return new Response(JSON.stringify(uploaded(size, decodeURIComponent(headers.get("x-qcloud-filename")!), headers.get("x-qcloud-content-type")!)), { status: 201 });
+    } finally { reader.releaseLock(); }
+  }});
+}
+
+test("known-length uploads finalize delayed EOF before an early 201 receipt", async () => {
+  let eof = false;
+  const sdk = earlyReceipt(body => { assert.ok(eof); assert.deepEqual(body, Buffer.from(bytes)); });
+  const source = (async function* () {
+    yield bytes;
+    await new Promise(resolve => setTimeout(resolve, 20));
+    yield new Uint8Array(); yield new Uint8Array();
+    eof = true;
+  })();
+  const result = await sdk.generation.files.upload(source, { size: bytes.length });
+  assert.equal(result.sha256, uploaded(bytes.length).data.sha256);
+  // A regular file also requires an asynchronous read after its declared bytes.
+  const directory = await mkdtemp(join(tmpdir(), "qcloud-early-receipt-"));
+  try {
+    const path = join(directory, "input.bin"); await writeFile(path, bytes);
+    assert.equal((await sdk.generation.files.upload({ path })).filename, "input.bin");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("EOF lookahead preserves a caller's reused final buffer", async () => {
+  const reused = Uint8Array.from(bytes);
+  const sdk = earlyReceipt(body => assert.deepEqual(body, Buffer.from(bytes)));
+  await sdk.generation.files.upload((async function* () {
+    yield reused;
+    reused.fill(0);
+    yield new Uint8Array();
+  })(), { size: bytes.length });
+  assert.ok(reused.every(value => value === 0));
+});
+
+test("known-length lookahead rejects extra or invalid chunks before releasing the last bytes", async () => {
+  let receipts = 0;
+  const sdk = earlyReceipt(() => { receipts++; });
+  for (const tail of [Uint8Array.of(1), "invalid"] as any[]) {
+    await assert.rejects(sdk.generation.files.upload((async function* () {
+      yield bytes; yield new Uint8Array(); yield tail;
+    })(), { size: bytes.length }), /declared size|Uint8Array/);
+  }
+  await assert.rejects(sdk.generation.files.upload((async function* () {
+    yield bytes.subarray(1);
+  })(), { size: bytes.length }), /declared size/);
+  assert.equal(receipts, 0);
+});
+
+test("cancellation and deadline interrupt a pending final EOF without releasing its bytes", async () => {
+  for (const mode of ["cancel", "timeout"]) {
+    let release: (value: IteratorResult<Uint8Array>) => void = () => {}, returned = false, started!: () => void;
+    const waiting = new Promise<void>(resolve => { started = resolve; });
+    const source = { [Symbol.asyncIterator]() {
+      let first = true;
+      return {
+        next: () => first ? (first = false, Promise.resolve({ value: bytes, done: false }))
+          : new Promise<IteratorResult<Uint8Array>>(resolve => { release = resolve; started(); }),
+        return: async () => { returned = true; release({ value: undefined, done: true }); return { value: undefined, done: true }; },
+      };
+    }};
+    let delivered = 0;
+    const sdk = new QCloud({ apiKey: "fixture", fetch: async (_url, options) => {
+      const reader = (options!.body as ReadableStream<Uint8Array>).getReader();
+      try { while (true) { const next = await reader.read(); if (next.done) break; delivered += next.value.length; } }
+      finally { reader.releaseLock(); }
+      throw new Error("cancelled upload must not complete");
+    }});
+    const controller = new AbortController(), reason = new Error("stop at EOF");
+    const pending = sdk.generation.files.upload(source, { size: bytes.length, signal: controller.signal, timeout: mode === "timeout" ? 40 : 1000 });
+    const rejected = assert.rejects(pending, error => mode === "cancel" ? error === reason : error instanceof APITimeoutError);
+    await waiting;
+    if (mode === "cancel") controller.abort(reason);
+    await rejected;
+    assert.ok(returned); assert.equal(delivered, 2 * 65536);
+  }
+});
+
 test("HTTP errors retain their type and request ID; redirects and interrupted uploads never replay",async()=>{
   const f=await fixture();
   try{
