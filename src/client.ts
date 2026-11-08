@@ -3,6 +3,7 @@ import { Completions } from "./resources/completions.js";
 import { Embeddings } from "./resources/embeddings.js";
 import { Models } from "./resources/models.js";
 import { Generation } from "./resources/generation.js";
+import { Serverless } from "./resources/serverless.js";
 import {
   APIConnectionError,
   APITimeoutError,
@@ -68,6 +69,7 @@ export class QCloudAI {
   readonly embeddings: Embeddings;
   readonly models: Models;
   readonly generation: Generation;
+  readonly serverless: Serverless;
   private _defaultHeaders: Record<string, string>;
   private _fetch: typeof globalThis.fetch;
   constructor(opts: ClientOptions = {}) {
@@ -117,6 +119,7 @@ export class QCloudAI {
     this.embeddings = new Embeddings(this);
     this.models = new Models(this);
     this.generation = new Generation(this);
+    this.serverless = new Serverless(this);
   }
   /** @internal */
   _buildHeaders(): Record<string, string> {

@@ -292,6 +292,28 @@ verified backend transport and is separate from catalog presence.
 
 Model availability and features are determined by the QCloud catalog and upstream provider. Use the QCloud model ID, which may differ from the provider's public model ID. The backend also supports `/messages` with Anthropic version `2023-06-01` for compatible text, image, and tool requests. This QCloud SDK has no `messages` resource; use the official Anthropic client with `baseURL: "https://platform.qcloud.host/api"` (it appends `/v1/messages`) and your QCloud key. Beta features and exact token counting are rejected, so this does not promise full Claude Code compatibility. This library is maintained by QCloud and is not an OpenAI or Anthropic product.
 
+## Serverless queue drafts
+
+`client.serverless.queue` saves planning records. It has no launch or job-execution method. A draft creates no endpoint, worker, billing account or charge. The catalog may be empty until an operator publishes reviewed profiles; `runtime_available` remains `false`, and `pricing: null` means unknown, never free.
+
+```ts
+import { randomUUID } from "node:crypto";
+const catalog = await client.serverless.queue.catalog();
+if (catalog.creation_available) {
+  const requestId = randomUUID(); // Persist with your intent before sending.
+  const draft = await client.serverless.queue.deployments.create({
+    name: "My model draft", profile_id: catalog.profiles[0].id,
+    client_request_id: requestId,
+  });
+  console.log(await client.serverless.queue.deployments.retrieve(draft.id));
+  console.log((await client.serverless.queue.deployments.list()).data);
+}
+```
+
+Use a scoped QCloud key: `serverless:read` for catalog/list/retrieve and `serverless:manage` for creation. Optional `org_id` selects only the key's own organization; it cannot grant access to another tenant. Methods accept normal request options, including timeout and `AbortSignal` (retrieve takes options as its third argument).
+
+Create makes one HTTP attempt, even when client retries are enabled. If omitted, the SDK generates `client_request_id` and attaches it as `error.clientRequestId` to typed API, connection and response-validation errors. After an ambiguous response, explicitly reuse that UUID with the identical name, profile and organization; the server returns the same draft. Changed intent or actor with the same UUID conflicts. For durable recovery across process termination, generate and store the UUID yourself before calling. QCloud deployment UUIDs are validated, and responses expose only the public draft fields. See [the draft example](examples/queue-draft.ts).
+
 ## Reliability
 
 Read-only GET requests retry connection failures, timeouts, HTTP 408/409/429 and 5xx responses up to twice, with backoff and `Retry-After` support. Inference POST requests retry only HTTP 429 rejections. An ambiguous connection failure, timeout or server error is surfaced without replaying a potentially billable generation. Authentication/billing failures and started streams are never retried. Set `maxRetries: 0` to disable all retries. A manual retry after an ambiguous failure may incur duplicate usage.

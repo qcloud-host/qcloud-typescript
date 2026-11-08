@@ -44,6 +44,7 @@ export type {
 } from "./types/embedding.js";
 
 export type { Model, ModelList } from "./types/model.js";
+export type { QueueCatalog, QueueProfile, QueueDeployment, QueueDeploymentList, QueueRequestParams, QueueDeploymentCreateParams } from "./types/serverless.js";
 
 export { QCloudAI as QCloud } from "./client.js";
 export { GenerationJobError, GenerationTimeoutError } from "./resources/generation.js";

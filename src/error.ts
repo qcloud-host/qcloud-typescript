@@ -1,5 +1,5 @@
 export class QCloudAIError extends Error {
-  /** Stable submission identity when a generation POST has an ambiguous result. */
+  /** Stable identity for an explicit retry after a generation or draft-create error. */
   clientRequestId?: string;
   constructor(message: string) {
     super(message);
