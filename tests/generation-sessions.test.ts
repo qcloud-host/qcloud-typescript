@@ -151,3 +151,70 @@ test("malformed session UUIDs and alternate UUID forms fail before HTTP", async 
     assert.deepEqual(f.state.urls, []);
   } finally { await f.close(); }
 });
+
+function bufferedSession(id: string): Uint8Array {
+  return Buffer.from(`event: answer\ndata: ${JSON.stringify({ session_id: id, type: "answer", sdp: "v=0\r\ns=🌍" })}\n\nevent: closed\ndata: ${JSON.stringify({ session_id: id, reason: "session_finished" })}\n\n`);
+}
+
+test("buffered session events stop on explicit close, abort and deadline without another request", async () => {
+  for (const mode of ["close", "abort", "deadline"] as const) {
+    const id = randomUUID(), abort = new AbortController(), reason = Error("caller stopped");
+    let requests = 0, cancelled = 0;
+    const sdk = new QCloud({ apiKey: "qc-fixture", fetch: async () => {
+      requests++;
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(bufferedSession(id)); }, cancel() { cancelled++; } }), { headers: { "content-type": "text/event-stream" } });
+    } });
+    const stream = await sdk.generation.sessions.offer(id, { type: "offer", sdp: "v=0" }, { sessionToken: "single-use", signal: abort.signal, timeout: mode === "deadline" ? 40 : 1000 });
+    const events = stream[Symbol.asyncIterator]();
+    assert.equal((await events.next()).value?.event, "answer");
+    if (mode === "close") { await stream.close(); assert.equal((await events.next()).done, true); }
+    else if (mode === "abort") { abort.abort(reason); await assert.rejects(events.next(), error => error === reason); }
+    else { await new Promise(resolve => setTimeout(resolve, 65)); await assert.rejects(events.next(), APITimeoutError); }
+    assert.equal(cancelled, 1); assert.equal(requests, 1);
+  }
+});
+
+test("session UTF-8 errors are validation failures, including a truncated code point at EOF", async () => {
+  for (const truncated of [false, true]) {
+    const id = randomUUID(); let cancelled = 0, requests = 0;
+    const body = truncated ? Buffer.from([0xe2, 0x82]) : Buffer.concat([Buffer.from(`event: answer\ndata: {"session_id":"${id}","type":"answer","sdp":"v=0`), Buffer.from([0xff]), Buffer.from('"}\n\n')]);
+    const sdk = new QCloud({ apiKey: "qc-fixture", fetch: async () => {
+      requests++; let sent = false;
+      return new Response(new ReadableStream({ pull(controller) { if (sent) controller.close(); else { sent = true; controller.enqueue(body); } }, cancel() { cancelled++; } }), { headers: { "content-type": "text/event-stream" } });
+    } });
+    const stream = await sdk.generation.sessions.offer(id, { type: "offer", sdp: "v=0" }, { sessionToken: "single-use" });
+    await assert.rejects(async () => { for await (const _ of stream) assert.fail("Malformed UTF-8 cannot produce an SDP answer"); }, error => error instanceof APIResponseValidationError && /UTF-8/.test(error.message));
+    assert.equal(requests, 1); assert.ok(cancelled <= 1);
+  }
+});
+
+test("session lines are bounded before newline or EOF and limits count UTF-8 bytes", async () => {
+  for (const mode of ["no-newline", "unicode", "multiline"] as const) {
+    const id = randomUUID(); let pulls = 0, cancelled = 0;
+    const sdk = new QCloud({ apiKey: "qc-fixture", fetch: async () => new Response(new ReadableStream({
+      pull(controller) {
+        pulls++;
+        if (mode === "no-newline") {
+          assert.ok(pulls <= 35, "The SDK must reject before asking for an unbounded line");
+          controller.enqueue(Buffer.alloc(65_536, 120));
+        } else if (pulls === 1) controller.enqueue(Buffer.from(mode === "unicode" ? `data: ${"世".repeat(750_000)}\n\n` : `data: ${"世".repeat(360_000)}\ndata: ${"世".repeat(360_000)}\n\n`));
+        else controller.close();
+      }, cancel() { cancelled++; },
+    }), { headers: { "content-type": "text/event-stream" } }) });
+    const stream = await sdk.generation.sessions.offer(id, { type: "offer", sdp: "v=0" }, { sessionToken: "single-use" });
+    await assert.rejects(async () => { for await (const _ of stream) assert.fail("An oversized event must not be delivered"); }, error => error instanceof APIResponseValidationError && /size limit/.test(error.message));
+    assert.ok(cancelled <= 1);
+    if (mode === "no-newline") { assert.ok(pulls <= 34); assert.equal(cancelled, 1); }
+  }
+});
+
+test("session limits apply per event rather than to a large transport chunk or stream lifetime", async () => {
+  const id = randomUUID();
+  const bytes = Buffer.concat([Buffer.from((":" + "x".repeat(65_000) + "\r\n").repeat(50)), bufferedSession(id)]);
+  let cancelled = 0;
+  const sdk = new QCloud({ apiKey: "qc-fixture", fetch: async () => new Response(new ReadableStream({ start(controller) { controller.enqueue(bytes); }, cancel() { cancelled++; } }), { headers: { "content-type": "text/event-stream" } }) });
+  const events = [];
+  for await (const event of await sdk.generation.sessions.offer(id, { type: "offer", sdp: "v=0" }, { sessionToken: "single-use" })) events.push(event);
+  assert.deepEqual(events.map(event => event.event), ["answer", "closed"]);
+  assert.equal(events[0].data.sdp, "v=0\r\ns=🌍"); assert.equal(cancelled, 1);
+});
