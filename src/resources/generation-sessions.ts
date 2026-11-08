@@ -3,10 +3,10 @@ import type { QCloudAI, RequestOptions } from "../client.js";
 import { APIResponseValidationError, QCloudAIError } from "../error.js";
 import type { GenerationSessionStream } from "../session-stream.js";
 import type { GenerationSession, GenerationSessionConnection, GenerationSessionCreateParams, GenerationSessionOffer } from "../types/generation.js";
+import { normalizeUuid } from "../uuid.js";
 
-const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const states = new Set(["created", "connecting", "active", "closing", "closed", "review"]);
-function sessionId(value: string): string { if (!uuid.test(value)) throw new TypeError("A session UUID is required"); return value; }
+function sessionId(value: string): string { return normalizeUuid(value, "session ID"); }
 function data(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || !("data" in value) || !value.data || typeof value.data !== "object" || Array.isArray(value.data)) throw new APIResponseValidationError("Invalid session response envelope");
   return value.data as Record<string, unknown>;
@@ -31,17 +31,17 @@ export class GenerationSessions {
   async create(params: GenerationSessionCreateParams, options?: RequestOptions): Promise<GenerationSession> {
     if (params.billing_mode !== "metered") throw new TypeError("billing_mode:'metered' is required");
     if (!params.model || !["websocket", "webrtc"].includes(params.transport)) throw new TypeError("A model and supported session transport are required");
-    const requestId = sessionId(params.client_request_id ?? randomUUID());
+    const requestId = normalizeUuid(params.client_request_id ?? randomUUID(), "client_request_id");
     if (params.max_duration_seconds !== undefined && (!Number.isInteger(params.max_duration_seconds) || params.max_duration_seconds < 1 || params.max_duration_seconds > 3600)) throw new TypeError("max_duration_seconds must be an integer from 1 to 3600");
     const body = { model: params.model, transport: params.transport, billing_mode: "metered", client_request_id: requestId, ...(params.max_duration_seconds === undefined ? {} : { max_duration_seconds: params.max_duration_seconds }) };
     try { return session(await this.client._request("POST", "/generation/sessions", { ...options, body, maxRetries: 0 })); }
     catch (error) { if (error instanceof QCloudAIError) error.clientRequestId = requestId; throw error; }
   }
-  async retrieve(id: string, options?: RequestOptions): Promise<GenerationSession> { return session(await this.client._request("GET", `/generation/sessions/${sessionId(id)}`, options), id); }
-  async connect(id: string, options?: RequestOptions): Promise<GenerationSessionConnection> { return connection(await this.client._request("POST", `/generation/sessions/${sessionId(id)}/connect`, { ...options, maxRetries: 0 }), id); }
-  async close(id: string, options?: RequestOptions): Promise<GenerationSession> { return session(await this.client._request("POST", `/generation/sessions/${sessionId(id)}/close`, { ...options, maxRetries: 0 }), id); }
+  async retrieve(id: string, options?: RequestOptions): Promise<GenerationSession> { id = sessionId(id); return session(await this.client._request("GET", `/generation/sessions/${id}`, options), id); }
+  async connect(id: string, options?: RequestOptions): Promise<GenerationSessionConnection> { id = sessionId(id); return connection(await this.client._request("POST", `/generation/sessions/${id}/connect`, { ...options, maxRetries: 0 }), id); }
+  async close(id: string, options?: RequestOptions): Promise<GenerationSession> { id = sessionId(id); return session(await this.client._request("POST", `/generation/sessions/${id}/close`, { ...options, maxRetries: 0 }), id); }
   offer(id: string, params: GenerationSessionOffer, options: RequestOptions & { sessionToken: string }): Promise<GenerationSessionStream> {
-    sessionId(id);
+    id = sessionId(id);
     if (params.type !== "offer" || typeof params.sdp !== "string" || !params.sdp || !options.sessionToken || /[\r\n]/.test(options.sessionToken)) throw new TypeError("An SDP offer and session token are required");
     return this.client._request("POST", `/generation/sessions/${id}/offer`, { ...options, body: { type: "offer", sdp: params.sdp }, headers: { ...options.headers, "X-QCloud-Session-Token": options.sessionToken }, maxRetries: 0, stream: true, sessionId: id });
   }

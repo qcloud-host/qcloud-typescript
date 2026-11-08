@@ -3,9 +3,9 @@ import type { QCloudAI, RequestOptions } from "../client.js";
 import { APIResponseValidationError, APITimeoutError, QCloudAIError } from "../error.js";
 import type { GenerationJob, GenerationJobStatus, GenerationModel, GenerationModelList, GenerationModelListParams, GenerationPendingResult, GenerationResult, GenerationSchema, GenerationSubmitParams, GenerationSubscription, JSONValue } from "../types/generation.js";
 import { GenerationSessions } from "./generation-sessions.js";
+import { normalizeUuid } from "../uuid.js";
 
 const statuses = new Set<GenerationJobStatus>(["queued", "submitting", "running", "succeeded", "failed", "cancelled", "review"]);
-const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 function pathId(value: string): string {
   if (typeof value !== "string" || !value) throw new TypeError("An ID is required");
   return encodeURIComponent(value);
@@ -71,8 +71,7 @@ export class GenerationJobs {
   async submit(params: GenerationSubmitParams, options?: RequestOptions): Promise<GenerationJob> {
     if (params.billing_mode !== "metered") throw new TypeError("billing_mode:'metered' is required to accept variable usage charges");
     pathId(params.model); assertJSON(params.input);
-    const requestId = params.client_request_id ?? randomUUID();
-    if (!uuid.test(requestId)) throw new TypeError("client_request_id must be a UUID");
+    const requestId = normalizeUuid(params.client_request_id ?? randomUUID(), "client_request_id");
     if (params.timeout_seconds !== undefined && (!Number.isInteger(params.timeout_seconds) || params.timeout_seconds < 1 || params.timeout_seconds > 86400)) throw new TypeError("timeout_seconds must be an integer from 1 to 86400");
     const body = { model: params.model, input: params.input, billing_mode: "metered", client_request_id: requestId, ...(params.timeout_seconds === undefined ? {} : { timeout_seconds: params.timeout_seconds }) };
     try { return jobEnvelope(await this.client._request("POST", "/generation/jobs", { ...options, maxRetries: 0, body })); }
@@ -82,10 +81,11 @@ export class GenerationJobs {
       throw error;
     }
   }
-  async retrieve(id: string, options?: RequestOptions): Promise<GenerationJob> { return jobEnvelope(await this.client._request("GET", `/generation/jobs/${pathId(id)}`, options), id); }
-  async cancel(id: string, options?: RequestOptions): Promise<GenerationJob> { return jobEnvelope(await this.client._request("POST", `/generation/jobs/${pathId(id)}/cancel`, { ...options, maxRetries: 0 }), id); }
+  async retrieve(id: string, options?: RequestOptions): Promise<GenerationJob> { id = normalizeUuid(id, "job ID"); return jobEnvelope(await this.client._request("GET", `/generation/jobs/${id}`, options), id); }
+  async cancel(id: string, options?: RequestOptions): Promise<GenerationJob> { id = normalizeUuid(id, "job ID"); return jobEnvelope(await this.client._request("POST", `/generation/jobs/${id}/cancel`, { ...options, maxRetries: 0 }), id); }
   async result<T = JSONValue>(id: string, options?: RequestOptions): Promise<GenerationResult<T> | GenerationPendingResult> {
-    const value = await this.client._request<GenerationResult<T> | GenerationPendingResult>("GET", `/generation/jobs/${pathId(id)}/result`, { ...options, maxRetries: options?.maxRetries ?? 0 });
+    id = normalizeUuid(id, "job ID");
+    const value = await this.client._request<GenerationResult<T> | GenerationPendingResult>("GET", `/generation/jobs/${id}/result`, { ...options, maxRetries: options?.maxRetries ?? 0 });
     if (!value || typeof value !== "object" || !("data" in value)) throw new APIResponseValidationError("The API returned an invalid generation result");
     if ("job_id" in value) { if (value.job_id !== id || !value.billing) throw new APIResponseValidationError("The generation result belongs to a different job"); }
     else if (job(value.data).id !== id) throw new APIResponseValidationError("The API returned a different generation job");
@@ -103,14 +103,14 @@ export class GenerationJobs {
     }
   }
   async wait(id: string, options: GenerationPollOptions = {}): Promise<GenerationJob> {
-    pathId(id); const { timeout, interval } = pollOptions(options);
+    id = normalizeUuid(id, "job ID"); const { timeout, interval } = pollOptions(options);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new GenerationTimeoutError(id)), timeout);
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
     try { return await this.poll(id, options, signal, interval); } finally { clearTimeout(timer); }
   }
   async subscribe<T = JSONValue>(params: GenerationSubmitParams, options: GenerationPollOptions = {}): Promise<GenerationSubscription<T>> {
-    const { timeout, interval } = pollOptions(options), requestId = params.client_request_id ?? randomUUID();
+    const { timeout, interval } = pollOptions(options), requestId = normalizeUuid(params.client_request_id ?? randomUUID(), "client_request_id");
     let jobId: string | undefined;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new GenerationTimeoutError(jobId, requestId)), timeout);

@@ -114,3 +114,40 @@ test("session offers retain transport timeouts and reject malformed local inputs
     assert.equal(f.state.posts, 0);
   } finally { await f.close(); }
 });
+
+test("uppercase session UUIDs work for control, capabilities and streamed event identity", async () => {
+  const f = await fixture(), upper = f.id.toUpperCase();
+  const requestId = "ABCDEF12-3456-4789-ABCD-EF1234567890";
+  const params = { model: "qcloud/session", transport: "webrtc" as const, billing_mode: "metered" as const, client_request_id: requestId };
+  try {
+    await f.sdk.generation.sessions.create(params);
+    assert.equal((f.state.bodies[0] as { client_request_id: string }).client_request_id, requestId.toLowerCase());
+    assert.equal((await f.sdk.generation.sessions.retrieve(upper)).id, f.id);
+    const capability = await f.sdk.generation.sessions.connect(upper);
+    assert.equal(capability.session_id, f.id);
+    const stream = await f.sdk.generation.sessions.offer(upper, { type: "offer", sdp: "offer" }, { sessionToken: capability.token });
+    assert.equal(stream.sessionId, f.id);
+    const events = []; for await (const event of stream) events.push(event);
+    assert.deepEqual(events.map(event => event.event), ["answer", "closed"]);
+    assert.equal((await f.sdk.generation.sessions.close(upper)).id, f.id);
+    assert.ok(f.state.urls.filter(url => url !== "/v1/generation/sessions").every(url => url.startsWith(`/v1/generation/sessions/${f.id}`)));
+    f.state.failure = 503;
+    await assert.rejects(f.sdk.generation.sessions.create(params), error => error instanceof APIError && error.clientRequestId === requestId.toLowerCase());
+    f.state.mode = "mismatch";
+    await assert.rejects(async () => { for await (const _ of await f.sdk.generation.sessions.offer(upper, { type: "offer", sdp: "offer" }, { sessionToken: "single-use" })) { /* Consume the mismatched answer. */ } }, APIResponseValidationError);
+  } finally { await f.close(); }
+});
+
+test("malformed session UUIDs and alternate UUID forms fail before HTTP", async () => {
+  const f = await fixture();
+  try {
+    for (const id of [`{${f.id}}`, f.id.replaceAll("-", ""), ` ${f.id}`, `${f.id}\n`, `g${f.id.slice(1)}`, f.id.slice(1)]) {
+      await assert.rejects(f.sdk.generation.sessions.retrieve(id), /UUID/);
+      await assert.rejects(f.sdk.generation.sessions.connect(id), /UUID/);
+      await assert.rejects(f.sdk.generation.sessions.close(id), /UUID/);
+      assert.throws(() => f.sdk.generation.sessions.offer(id, { type: "offer", sdp: "offer" }, { sessionToken: "single-use" }), /UUID/);
+      await assert.rejects(f.sdk.generation.sessions.create({ model: "qcloud/session", transport: "websocket", billing_mode: "metered", client_request_id: id }), /UUID/);
+    }
+    assert.deepEqual(f.state.urls, []);
+  } finally { await f.close(); }
+});

@@ -85,7 +85,7 @@ export class QCloudAI {
     this.baseURL = (
       opts.baseURL ??
       process.env.QCLOUD_BASE_URL ??
-      "https://www.qcloud.host/api/v1"
+      "https://platform.qcloud.host/api/v1"
     ).replace(/\/+$/, "");
     const url = new URL(this.baseURL);
     if (

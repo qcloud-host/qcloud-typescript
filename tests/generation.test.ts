@@ -29,3 +29,44 @@ test("terminal failures retain the job and do not request cancellation",async()=
 test("poll deadline and abort stop in-flight HTTP without cancelling the job",async()=>{const f=await fixture();try{f.state.stall=true;const started=Date.now();await assert.rejects(f.client.generation.jobs.wait(f.id,{timeoutMs:40}),e=>e instanceof GenerationTimeoutError&&e.jobId===f.id);assert.ok(Date.now()-started<500);const controller=new AbortController();const pending=f.client.generation.jobs.wait(f.id,{signal:controller.signal,timeoutMs:1000});setTimeout(()=>controller.abort(new Error("caller stopped")),20);await assert.rejects(pending,/caller stopped/);assert.equal(f.state.cancels,0);}finally{await f.close();}});
 test("submission failures retain retry identity and never auto-replay billed POST",async()=>{for(const status of [429,503]){const f=await fixture();try{f.state.failure=status;const id=randomUUID();await assert.rejects(f.client.generation.jobs.submit({model:modelId,input:[],billing_mode:"metered",client_request_id:id}),e=>e instanceof APIError&&e.status===status&&e.clientRequestId===id);assert.equal(f.state.posts,1);}finally{await f.close();}}});
 test("invalid consent/JSON fails locally; response identity mismatches fail closed",async()=>{const f=await fixture();try{await assert.rejects(f.client.generation.jobs.submit({model:modelId,input:NaN,billing_mode:"metered"}),/JSON/);await assert.rejects(f.client.generation.jobs.submit({model:modelId,input:null,billing_mode:"free" as "metered"}),/metered/);assert.equal(f.state.posts,0);f.state.mismatch=true;await assert.rejects(f.client.generation.jobs.retrieve(f.id),APIResponseValidationError);await assert.rejects(f.client.generation.jobs.wait(f.id,{timeoutMs:1000}),APIResponseValidationError);f.state.resultReads=1;await assert.rejects(f.client.generation.jobs.result(f.id),APIResponseValidationError);}finally{await f.close();}});
+
+test("uppercase job and request UUIDs use canonical paths and retain strict response identity", async () => {
+  const f = await fixture(), upper = f.id.toUpperCase();
+  const requestId = "ABCDEF12-3456-4789-ABCD-EF1234567890";
+  const params = { model: modelId, input: null, billing_mode: "metered" as const, client_request_id: requestId };
+  try {
+    await f.client.generation.jobs.submit(params);
+    assert.equal((f.state.bodies[0] as { client_request_id: string }).client_request_id, requestId.toLowerCase());
+    assert.equal((await f.client.generation.jobs.retrieve(upper)).id, f.id);
+    const pending = await f.client.generation.jobs.result(upper);
+    assert.ok(!("job_id" in pending)); assert.equal(pending.data.id, f.id);
+    const complete = await f.client.generation.jobs.result(upper);
+    assert.ok("job_id" in complete); assert.equal(complete.job_id, f.id);
+    assert.equal((await f.client.generation.jobs.wait(upper, { pollIntervalMs: 1, timeoutMs: 1000 })).id, f.id);
+    assert.equal((await f.client.generation.jobs.cancel(upper)).id, f.id);
+    assert.equal((await f.client.generation.jobs.subscribe(params, { pollIntervalMs: 1, timeoutMs: 1000 })).job.id, f.id);
+    assert.ok(f.state.urls.filter(url => url !== "/v1/generation/jobs").every(url => url.startsWith(`/v1/generation/jobs/${f.id}`)));
+    assert.ok(f.state.bodies.every(body => (body as { client_request_id: string }).client_request_id === requestId.toLowerCase()));
+    f.state.failure = 503;
+    await assert.rejects(f.client.generation.jobs.submit(params), error => error instanceof APIError && error.clientRequestId === requestId.toLowerCase());
+    f.state.mismatch = true;
+    await assert.rejects(f.client.generation.jobs.retrieve(upper), APIResponseValidationError);
+    await assert.rejects(f.client.generation.jobs.result(upper), APIResponseValidationError);
+  } finally { await f.close(); }
+});
+
+test("malformed job UUIDs and alternate UUID forms fail before HTTP", async () => {
+  const f = await fixture();
+  try {
+    for (const id of [`{${f.id}}`, f.id.replaceAll("-", ""), ` ${f.id}`, `${f.id}\n`, `g${f.id.slice(1)}`, f.id.slice(1)]) {
+      await assert.rejects(f.client.generation.jobs.retrieve(id), /UUID/);
+      await assert.rejects(f.client.generation.jobs.cancel(id), /UUID/);
+      await assert.rejects(f.client.generation.jobs.result(id), /UUID/);
+      await assert.rejects(f.client.generation.jobs.wait(id), /UUID/);
+      const params = { model: modelId, input: null, billing_mode: "metered" as const, client_request_id: id };
+      await assert.rejects(f.client.generation.jobs.submit(params), /UUID/);
+      await assert.rejects(f.client.generation.jobs.subscribe(params), /UUID/);
+    }
+    assert.deepEqual(f.state.urls, []);
+  } finally { await f.close(); }
+});
