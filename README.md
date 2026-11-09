@@ -155,8 +155,16 @@ notices; it is historical documentation, and cannot start new jobs or sessions.
 `catalog.degraded` and `catalog.quarantined_count` report affected models while
 healthy references continue to refresh. Require `queued_available: true` before
 submitting a queued job. `renderGenerationModelReference` omits runnable examples
-when either model metadata or the schema marks the reference historical or stale.
+when either model metadata or the schema marks the reference historical, stale,
+or unavailable for execution.
 Older snapshots may omit these fields; omission does not establish availability.
+
+When present, `admission_policy` adds current request restrictions to the complete
+model schema. Follow both: a schema can describe settings the service does not
+currently accept. The policy lists required fields, permitted values and whether
+extra fields are allowed. `availability_reason` explains a model's policy
+restriction. Reservations are review thresholds, not guaranteed spending caps;
+current prices, billing eligibility and account limits are checked at submission.
 
 ### Upload local model inputs
 

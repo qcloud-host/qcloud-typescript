@@ -11,6 +11,23 @@ const model:GenerationModel={id:modelId,object:"generation.model",display_name:"
 const schema={openapi:"3.1.0",info:{title:"QCloud Generation",version:"1"},"x-qcloud-model":model,components:{schemas:{NestedInput:{type:"object",properties:{data:{$ref:"#/components/schemas/Arbitrary"}}},Arbitrary:{oneOf:[{type:"null"},{type:"array"}]}}}};
 const billing={mode:"metered" as const,status:"settled" as const,currency:"USD" as const,markup_multiplier:2,cost_usd:0.012};
 function job(id:string,status:GenerationJob["status"]="queued"):GenerationJob{return {object:"generation.job",id,model:modelId,status,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),completed_at:status==="succeeded"?new Date().toISOString():null,deadline_at:new Date(Date.now()+3600000).toISOString(),cancel_requested:false,error:status==="failed"?{code:"generation_failed",message:"Model execution failed"}:null,billing,result_url:status==="succeeded"?`/generation/jobs/${id}/result`:null};}
+test("model references preserve admission limits and withhold unavailable execution examples", () => {
+  const admission_policy = {id:"fixture-fixed-image",fields:{image_size:{width:512,height:512},num_images:1},
+    all_fields_required:true,additional_fields:false,reservation_notice:"Reservations are review thresholds, not spending caps."};
+  const allowed:GenerationModel={...model,admission_policy,availability_reason:null};
+  const reference=renderGenerationModelReference(allowed,{...schema,"x-qcloud-model":allowed});
+  assert.ok(reference.includes(JSON.stringify(admission_policy,null,2)));
+  assert.match(reference,/complete schema may describe settings that QCloud does not currently accept/);
+  assert.ok(reference.includes('client.generation.jobs.subscribe'));
+  for(const row of [{...allowed,available:false},{...allowed,queued_available:false},
+    {...model,available:false,queued_available:false,admission_policy:null,availability_reason:"generation_budget_model_unsupported"}]) {
+    const blocked=renderGenerationModelReference(row,schema);
+    assert.ok(!blocked.includes('client.generation.jobs.subscribe'));
+    assert.ok(blocked.includes(JSON.stringify(schema,null,2)));
+  }
+  assert.ok(!renderGenerationModelReference(allowed,{...schema,"x-qcloud-model":{...allowed,available:false}}).includes('client.generation.jobs.subscribe'));
+});
+
 async function fixture(){
   const id=randomUUID();const state={posts:0,cancels:0,reads:0,resultReads:0,bodies:[] as unknown[],urls:[] as string[],failure:0,terminal:"succeeded" as GenerationJob["status"],stall:false,mismatch:false};
   const server=createServer(async(req,res)=>{state.urls.push(req.url!);res.setHeader("content-type","application/json");res.setHeader("x-request-id","generation-http-fixture");const send=(body:unknown,status=200)=>{res.statusCode=status;res.end(JSON.stringify(body));};

@@ -1,5 +1,13 @@
 /** JSON is intentionally open-ended: model inputs and outputs come from its schema. */
 export type JSONValue = null | boolean | number | string | JSONValue[] | { [key: string]: JSONValue };
+/** Additional server admission limits can be narrower than the model schema. */
+export interface GenerationAdmissionPolicy {
+  id: string;
+  fields: Record<string, JSONValue>;
+  all_fields_required: boolean;
+  additional_fields: boolean;
+  reservation_notice: string;
+}
 export interface GenerationModel {
   id: string;
   object: "generation.model";
@@ -23,6 +31,8 @@ export interface GenerationModel {
   license: { [key: string]: JSONValue } | null;
   updated_at: string;
   pricing?: { [key: string]: JSONValue } | null;
+  admission_policy?: GenerationAdmissionPolicy | null;
+  availability_reason?: string | null;
   schema_url: string;
   [key: string]: unknown;
 }
