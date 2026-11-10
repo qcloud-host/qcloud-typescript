@@ -1,4 +1,4 @@
-import { APIConnectionError, APIError, APIResponseValidationError } from "./error.js";
+import { APIConnectionError, APIError, APIResponseValidationError, errorDetails } from "./error.js";
 import { bindStreamAbort } from "./stream-abort.js";
 /** A single-use SSE stream. Breaking iteration cancels the HTTP body. */
 export class Stream<T> implements AsyncIterable<T> {
@@ -6,16 +6,23 @@ export class Stream<T> implements AsyncIterable<T> {
   private consumed = false;
   private closed = false;
   private requestID?: string;
+  private headers: Headers;
   private unbindAbort: () => void;
+  /**
+   * `terminal` marks streams that end with a named event (Anthropic Messages
+   * `message_stop`) instead of the Chat Completions `[DONE]` sentinel.
+   */
   constructor(
     response: Response,
     private cleanup: () => void = () => {},
     private checkAbort: () => void = () => {},
     signal?: AbortSignal,
+    private terminal?: (event: T) => boolean,
   ) {
     if (!response.body)
       throw new APIResponseValidationError("Streaming response has no body");
     this.reader = response.body.getReader();
+    this.headers = response.headers;
     this.requestID = response.headers.get("x-request-id") ?? undefined;
     this.unbindAbort = bindStreamAbort(this.reader, signal);
   }
@@ -35,13 +42,14 @@ export class Stream<T> implements AsyncIterable<T> {
       if (!value || typeof value !== "object" || Array.isArray(value))
         throw new APIResponseValidationError("Expected an object in SSE data");
       if ("error" in value) {
-        const error = (value as { error: { message?: string } }).error;
+        const { message, errorType, code } = errorDetails(value);
         const streamError = new APIError(
           200,
-          error?.message ?? "The API reported a streaming error",
-          { body: value },
+          message ?? "The API reported a streaming error",
+          { errorType, code, body: value },
         );
-        streamError.requestID = this.requestID;
+        streamError._attachHeaders(this.headers);
+        streamError.requestID ??= this.requestID;
         throw streamError;
       }
       return value as T;
@@ -65,14 +73,18 @@ export class Stream<T> implements AsyncIterable<T> {
             if (data.length) {
               const payload = data.join("\n");
               data = [];
-              if (payload.trim() === "[DONE]") return;
-              yield parse(payload);
+              if (payload.trim() === "[DONE]" && !this.terminal) return;
+              const event = parse(payload);
+              yield event;
+              if (this.terminal?.(event)) return;
             }
           } else if (line === "data" || line.startsWith("data:"))
             data.push(line.slice(5).replace(/^ /, ""));
         }
         if (done && !this.closed)
-          throw new APIResponseValidationError("The SSE response ended before [DONE]");
+          throw new APIResponseValidationError(
+            this.terminal ? "The SSE response ended before its terminal event" : "The SSE response ended before [DONE]",
+          );
       }
     } catch (error) {
       this.checkAbort();

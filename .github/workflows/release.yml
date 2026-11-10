@@ -1,0 +1,148 @@
+# Build and pack once, test, attest, then publish that exact tarball to npm with
+# npm Trusted Publishing (OIDC) and verify the registry integrity. No npm token
+# is stored. npm can configure a trusted publisher only for a package that
+# already exists, so the first publish is a manual bootstrap (see RELEASING.md).
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release; must equal package.json (for example 0.4.0)
+        required: true
+      dist-tag:
+        description: npm dist-tag
+        type: choice
+        options: [next, latest]
+        default: next
+      publish:
+        description: Publish to npm (false = build, test and attest only)
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run check
+      - run: npm run check:package
+
+  pack:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      tarball: ${{ steps.pack.outputs.tarball }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Check requested version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          actual=$(node -p "require('./package.json').version")
+          sdk=$(sed -n 's/^export const SDK_VERSION = "\(.*\)";/\1/p' src/client.ts)
+          if [ "$actual" != "$REQUESTED" ] || [ "$sdk" != "$REQUESTED" ]; then
+            echo "package $actual / SDK_VERSION $sdk != $REQUESTED"; exit 1
+          fi
+      - run: npm ci
+      - id: pack
+        run: |
+          mkdir -p out
+          tarball=$(npm pack --pack-destination out --json | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0))[0].filename)")
+          (cd out && sha256sum "$tarball" > SHA256SUMS && cat SHA256SUMS)
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d' ' -f1 out/SHA256SUMS)" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: out/*.tgz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish
+    needs: pack
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/qcloud-ai/v/${{ inputs.version }}
+    permissions:
+      contents: read
+      id-token: write # npm Trusted Publishing and provenance
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: out/
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Verify the tested tarball
+        env:
+          TARBALL: ${{ needs.pack.outputs.tarball }}
+          EXPECTED: ${{ needs.pack.outputs.sha256 }}
+        run: cd out && test "$(sha256sum "$TARBALL" | cut -d' ' -f1)" = "$EXPECTED"
+      - name: Publish the exact tarball
+        env:
+          TARBALL: ${{ needs.pack.outputs.tarball }}
+          DIST_TAG: ${{ inputs.dist-tag }}
+        run: npm publish "out/$TARBALL" --access public --provenance --tag "$DIST_TAG"
+      - name: Registry integrity equals the tested tarball
+        env:
+          TARBALL: ${{ needs.pack.outputs.tarball }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          want="sha512-$(openssl dgst -sha512 -binary "out/$TARBALL" | base64 -w0)"
+          for _ in 1 2 3 4 5 6; do
+            got=$(npm view "qcloud-ai@$VERSION" dist.integrity 2>/dev/null) && [ -n "$got" ] && break
+            sleep 20
+          done
+          test "$got" = "$want" || { echo "registry $got != tested $want"; exit 1; }
+
+  github-release:
+    needs: [pack, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: out/
+      - name: Draft a GitHub release with the published tarball and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v$VERSION" out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --draft --title "qcloud-ai $VERSION" --notes "Published to npm from $GITHUB_SHA. See CHANGELOG.md."

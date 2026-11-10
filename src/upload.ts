@@ -189,7 +189,7 @@ export async function uploadFile(
     }
     const raw = Buffer.concat(parts).toString("utf8"); let envelope: any;
     try { envelope = JSON.parse(raw); } catch { envelope = { error: { message: raw.slice(0, 500) || response.statusText } }; }
-    raiseForStatus(response.status, envelope, response.headers.get("x-request-id") ?? undefined);
+    raiseForStatus(response.status, envelope, response.headers);
     const file = envelope?.data;
     let id: string;
     try { id = normalizeUuid(file?.id, "file ID"); } catch { throw new APIResponseValidationError("Invalid uploaded file identity"); }

@@ -9,12 +9,27 @@ export {
   APIConnectionError,
   APITimeoutError,
   AuthenticationError,
+  BadRequestError,
+  ConflictError,
   InsufficientCreditsError,
   InternalServerError,
   NotFoundError,
   PermissionDeniedError,
   RateLimitError,
+  UnprocessableEntityError,
+  parseRetryAfter,
 } from "./error.js";
+export type { RateLimitInfo } from "./error.js";
+export { Messages, ANTHROPIC_VERSION, messageText } from "./resources/messages.js";
+export type {
+  Message,
+  MessageContentBlock,
+  MessageCreateParams,
+  MessageParam,
+  MessageStreamEvent,
+  MessageTool,
+  MessageUsage,
+} from "./types/message.js";
 
 export { Stream } from "./streaming.js";
 

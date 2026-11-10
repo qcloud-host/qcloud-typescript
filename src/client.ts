@@ -4,10 +4,12 @@ import { Embeddings } from "./resources/embeddings.js";
 import { Models } from "./resources/models.js";
 import { Generation } from "./resources/generation.js";
 import { Serverless } from "./resources/serverless.js";
+import { Messages } from "./resources/messages.js";
 import {
   APIConnectionError,
   APITimeoutError,
   APIResponseValidationError,
+  parseRetryAfter,
   raiseForStatus,
 } from "./error.js";
 import { Stream } from "./streaming.js";
@@ -15,7 +17,7 @@ import { GenerationSessionStream } from "./session-stream.js";
 import { GenerationFile, downloadError } from "./download.js";
 import { uploadFile, type GenerationUploadOptions, type GenerationUploadSource } from "./upload.js";
 
-export const SDK_VERSION = "0.3.0";
+export const SDK_VERSION = "0.4.0";
 export interface RequestOptions {
   signal?: AbortSignal;
   headers?: Record<string, string>;
@@ -32,16 +34,27 @@ export interface ClientOptions {
   fetch?: typeof globalThis.fetch;
 }
 function retryDelay(response: Response | undefined, attempt: number): number {
-  const value = response?.headers.get("retry-after");
-  const seconds = value ? Number(value) : NaN;
-  const delay = Number.isFinite(seconds)
+  const seconds = parseRetryAfter(response?.headers.get("retry-after"));
+  return seconds !== undefined && seconds <= 60
     ? seconds * 1000
-    : value
-      ? Date.parse(value) - Date.now()
-      : NaN;
-  return Number.isFinite(delay) && delay >= 0 && delay <= 60_000
-    ? delay
     : Math.min(500 * 2 ** attempt, 8000) * (0.75 + Math.random() * 0.25);
+}
+/** 429 is an admission rejection before provider dispatch; other statuses are retried only for reads. */
+function retryableStatus(method: string, status: number): boolean {
+  return status === 429 || (method === "GET" && ([408, 409].includes(status) || status >= 500));
+}
+// Socket errors raised while connecting: the request bytes were never written,
+// so nothing can have been admitted or billed and every method may retry. A
+// reset or close on an established (possibly reused) connection is ambiguous
+// for POST and is never replayed.
+const NOT_SENT_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "ENETUNREACH", "EHOSTUNREACH"]);
+function failedBeforeSend(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  const cause = (error as { cause?: unknown }).cause as { code?: unknown; errors?: unknown } | undefined;
+  if (!cause || typeof cause !== "object") return false;
+  if (typeof cause.code === "string" && NOT_SENT_CODES.has(cause.code)) return true;
+  return Array.isArray(cause.errors) && cause.errors.length > 0 &&
+    cause.errors.every((item) => typeof item?.code === "string" && NOT_SENT_CODES.has(item.code));
 }
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
@@ -70,6 +83,8 @@ export class QCloudAI {
   readonly models: Models;
   readonly generation: Generation;
   readonly serverless: Serverless;
+  /** Supported subset of the Anthropic Messages API. */
+  readonly messages: Messages;
   private _defaultHeaders: Record<string, string>;
   private _fetch: typeof globalThis.fetch;
   constructor(opts: ClientOptions = {}) {
@@ -120,6 +135,7 @@ export class QCloudAI {
     this.models = new Models(this);
     this.generation = new Generation(this);
     this.serverless = new Serverless(this);
+    this.messages = new Messages(this);
   }
   /** @internal */
   _buildHeaders(): Record<string, string> {
@@ -139,7 +155,7 @@ export class QCloudAI {
   async _request<T>(
     method: string,
     path: string,
-    opts?: RequestOptions & { body?: unknown; stream?: boolean; sessionId?: string; binary?: { jobId: string; assetId: string; maxBytes: number } },
+    opts?: RequestOptions & { body?: unknown; stream?: boolean; terminal?: (event: any) => boolean; sessionId?: string; binary?: { jobId: string; assetId: string; maxBytes: number } },
   ): Promise<T> {
     const body =
       opts?.body === undefined ? undefined : JSON.stringify(opts.body);
@@ -173,11 +189,7 @@ export class QCloudAI {
         });
         if (!response.ok) {
           if (opts?.binary) await downloadError(response, controller.signal);
-          if (
-            attempt < maxRetries &&
-            (response.status === 429 ||
-              (method === "GET" && ([408, 409].includes(response.status) || response.status >= 500)))
-          ) {
+          if (attempt < maxRetries && retryableStatus(method, response.status)) {
             await response.body?.cancel();
             cleanup();
             await sleep(retryDelay(response, attempt), opts?.signal);
@@ -192,11 +204,7 @@ export class QCloudAI {
               error: { message: raw.slice(0, 500) || response.statusText },
             };
           }
-          raiseForStatus(
-            response.status,
-            data,
-            response.headers.get("x-request-id") ?? undefined,
-          );
+          raiseForStatus(response.status, data, response.headers);
         }
         if (opts?.binary) {
           const checkAbort = () => {
@@ -222,7 +230,7 @@ export class QCloudAI {
             if (opts?.signal?.aborted) throw opts.signal.reason;
             if (timedOut) throw new APITimeoutError();
           };
-          const stream = opts.sessionId ? new GenerationSessionStream(response, opts.sessionId, cleanup, checkAbort, controller.signal) : new Stream<unknown>(response, cleanup, checkAbort, controller.signal);
+          const stream = opts.sessionId ? new GenerationSessionStream(response, opts.sessionId, cleanup, checkAbort, controller.signal) : new Stream<unknown>(response, cleanup, checkAbort, controller.signal, opts.terminal);
           streamOwnsCleanup = true;
           return stream as T;
         }
@@ -235,8 +243,9 @@ export class QCloudAI {
       } catch (err) {
         if (opts?.signal?.aborted) throw opts.signal.reason;
         if (timedOut || err instanceof TypeError) {
-          // A failed POST may already have generated billable output. Do not replay it.
-          if (method === "GET" && attempt < maxRetries) {
+          // A failed POST may already have generated billable output. Only a
+          // failure before the request was sent is replayed.
+          if (attempt < maxRetries && (method === "GET" || (!timedOut && failedBeforeSend(err)))) {
             cleanup();
             await sleep(retryDelay(undefined, attempt), opts?.signal);
             continue;

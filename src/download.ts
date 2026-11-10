@@ -22,7 +22,7 @@ export async function downloadError(response: Response, signal: AbortSignal): Pr
   for (const chunk of chunks) { bytes.set(chunk, position); position += chunk.length; }
   const raw = new TextDecoder().decode(bytes); let body: unknown;
   try { body = JSON.parse(raw); } catch { body = { error: { message: raw.slice(0, 500) || response.statusText } }; }
-  raiseForStatus(response.status, body, response.headers.get("x-request-id") ?? undefined);
+  raiseForStatus(response.status, body, response.headers);
   throw new APIResponseValidationError("Unexpected download status");
 }
 

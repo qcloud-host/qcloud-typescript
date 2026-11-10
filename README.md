@@ -83,19 +83,47 @@ Embedding requests accept `dimensions` and `encoding_format` when supported by t
 ## Configuration and errors
 
 ```typescript
-import { APIError } from "qcloud-ai";
+import { APIError, BadRequestError, InsufficientCreditsError, RateLimitError } from "qcloud-ai";
 const client = new QCloud({ timeout: 120_000, maxRetries: 0 });
 try {
-  await client.models.list();
+  await client.chat.completions.create({ model: process.env.QCLOUD_MODEL!, messages });
 } catch (error) {
-  if (error instanceof APIError) console.error(error.status, error.requestID);
+  // Rate-limit values describe QCloud admission, not a provider's final charge.
+  if (error instanceof RateLimitError) console.error(error.retryAfter, error.rateLimit, error.requestID);
+  else if (error instanceof InsufficientCreditsError) console.error("Top up credits", error.requestID);
+  else if (error instanceof BadRequestError) console.error("Rejected before dispatch", error.code, error.message);
+  else if (error instanceof APIError) console.error(error.status, error.errorType, error.code, error.requestID);
   else throw error;
 }
 ```
 
 `apiKey` / `QCLOUD_API_KEY` is required. `baseURL` / `QCLOUD_BASE_URL` defaults to `https://platform.qcloud.host/api/v1`. For a separate backend deployment, set the full verified API URL including `/v1`; do not infer the API hostname from the website domain. `organization` / `QCLOUD_ORGANIZATION_ID` selects an organization UUID through `X-QCloud-Organization`; an API key can only select the organization that owns it. `timeout` is milliseconds per attempt, including stream delivery (default 600000). `maxRetries` defaults to 2. `defaultHeaders` adds headers and `fetch` injects a custom fetch transport. Request methods accept a second options argument with `signal` and `headers`. Browser execution is disabled to prevent embedding server API keys in client applications.
 
-The SDK exports typed HTTP, authentication, billing, rate-limit, connection, timeout, and response-validation errors. Caller cancellation preserves the abort signal's reason.
+Every HTTP error subclasses `APIError`: `BadRequestError` (400), `AuthenticationError` (401), `InsufficientCreditsError` (402), `PermissionDeniedError` (403), `NotFoundError` (404), `ConflictError` (409), `UnprocessableEntityError` (422), `RateLimitError` (429) and `InternalServerError` (5xx). Each carries `requestID` (quote it to support), `headers`, `retryAfter` in seconds, `rateLimit` (`limitRequests`, `remainingRequests`, `limitTokens`, `remainingTokens`), `errorType` and `code`. Network failures raise `APIConnectionError` or `APITimeoutError`. Caller cancellation preserves the abort signal's reason. The full matrix is in [COMPATIBILITY.md](COMPATIBILITY.md).
+
+## Anthropic-style Messages
+
+`client.messages` calls QCloud's Messages bridge with the same key and base URL. It supports text, system prompts, images for `vision` models and function tools. Thinking, prompt caching, beta headers, documents, server tools, `top_k` and non-empty `stop_sequences` fail with `BadRequestError` before dispatch, and exact token counting is not available. It is not a Claude Code gateway.
+
+```typescript
+import { QCloud, messageText } from "qcloud-ai";
+const client = new QCloud();
+const message = await client.messages.create({
+  model: process.env.QCLOUD_MODEL!,
+  max_tokens: 256,
+  system: "Answer in one sentence.",
+  messages: [{ role: "user", content: "What is an embedding?" }],
+});
+console.log(messageText(message), message.usage);
+
+const stream = await client.messages.create({ model: process.env.QCLOUD_MODEL!, max_tokens: 256, stream: true,
+  messages: [{ role: "user", content: "Count to five." }] });
+for await (const event of stream) {
+  if (event.type === "content_block_delta") process.stdout.write(String(event.delta?.text ?? ""));
+}
+```
+
+The stream ends at `message_stop`; the preceding `message_delta` carries exact usage. A stream that ends earlier throws `APIResponseValidationError`.
 
 ## Use the official OpenAI SDK
 
@@ -104,10 +132,11 @@ import OpenAI from "openai";
 const client = new OpenAI({
   apiKey: process.env.QCLOUD_API_KEY,
   baseURL: "https://platform.qcloud.host/api/v1",
+  maxRetries: 0, // its default retries can replay an ambiguous, billable POST
 });
 ```
 
-Use its Chat Completions API with an active QCloud model ID. See [OpenAI's API](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) and [Anthropic's distinct Messages protocol](https://platform.claude.com/docs/en/api/typescript/messages/create).
+Use its Chat Completions API with an active QCloud model ID. The official Anthropic SDK works with `baseURL: "https://platform.qcloud.host/api"` (no `/v1`) for the supported Messages subset. Both are covered by contract tests with pinned versions. See [OpenAI's API](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) and [Anthropic's distinct Messages protocol](https://platform.claude.com/docs/en/api/typescript/messages/create).
 
 ## Develop
 
@@ -117,7 +146,7 @@ npm run check
 npm run check:package
 ```
 
-See [examples](examples) for tools and JSON output. Tests inject local HTTP transports and make no paid model calls.
+See [examples](examples) for tools, JSON output, Messages, an Express service, a Next.js route handler and a background worker. Tests inject local HTTP transports and make no paid model calls.
 
 ## API coverage
 
@@ -346,6 +375,8 @@ Launch with `endpoints.launch(draftId, { quote_id: quote.id, client_request_id: 
 Lists return `{ items, next_cursor }` with `limit` from 1 to 50 (default 20). `retrieve` returns the requested public record. `jobs.result(endpointId, jobId)` returns `{ available: false }` until a validated result is available; then it includes `text`, `finish_reason`, and token `usage`. `requires_review` and held exposure may persist after an ambiguous operation. Resource UUIDs, response identity, cursor consistency, UTF-8 prompt/result bounds and usage totals are validated; private provider fields are omitted. Prompt limits are 1–16,384 UTF-8 bytes, and `max_tokens` is 1–4,096; an immutable server profile may impose smaller limits. Existing queue draft methods remain unchanged.
 
 ## Reliability
+
+Read-only GET requests retry connection failures, timeouts, HTTP 408/409/429 and 5xx responses up to twice, with backoff and `Retry-After` support (up to 60 seconds). POST requests retry HTTP 429 admission rejections and connection failures that happened before the request was sent (`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `ENETUNREACH`, `EHOSTUNREACH`, connect timeout). A timeout, reset or server error after a POST was sent is surfaced without replaying it, because a provider may already have produced billable output; QCloud keeps that reservation for reconciliation. Set `maxRetries: 0` to disable all retries. Where an endpoint accepts `client_request_id`, reuse the same value to retry safely.
 
 ### Native generation sockets
 
