@@ -7,7 +7,7 @@ Before publishing, confirm ownership of the registry name, review the exact comm
 ## TypeScript / npm
 
 1. Sign in to the npm account that will own `qcloud-ai`, and confirm that the name is still available.
-2. On the designated release host, run `npm ci`, `npm run check`, and `npm run check:package`. The last command packs the package and installs it into a clean consumer offline, checks its contents and dependencies, then imports ESM and CommonJS and makes mocked HTTP requests. `npm ci` normally supplies the dependency cache; offline operators can supply reviewed dependency tarballs using the JSON array `QCLOUD_NPM_DEPENDENCY_ARCHIVES`.
+2. On the designated release host, run `npm ci`, `npm run check`, and `npm run check:package`. The last command packs the package and its installed, pinned runtime dependency, installs both into a clean consumer offline, checks contents and dependencies, then imports ESM and CommonJS and makes mocked HTTP requests. It does not depend on cached registry metadata. Offline operators can alternatively supply reviewed dependency tarballs using the JSON array `QCLOUD_NPM_DEPENDENCY_ARCHIVES`.
 3. Run `npm pack --ignore-scripts`, retain the tarball and its SHA-256 with the tested source commit, and inspect its contents. Publish that exact reviewed archive through the authenticated npm release process. Prefer npm Trusted Publishing once an authorized publisher is configured. Do not commit registry tokens.
 4. After the release exists on npm, install it by exact version in a clean consumer, update installation instructions to `npm install qcloud-ai`, remove the candidate marker in the changelog, and tag the released commit `v0.3.0`.
 

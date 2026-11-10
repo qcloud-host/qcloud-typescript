@@ -24,8 +24,19 @@ try {
     assert.ok(files.includes(path), `Missing archive file: ${path}`);
   assert.ok(files.every(path => path.startsWith("dist/") || ["README.md", "LICENSE", "package.json"].includes(path)), "Unexpected archive contents");
   writeFileSync(join(temp, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  // Optional exact runtime tarballs let an offline release host reuse reviewed caches.
-  const dependencies = JSON.parse(process.env.QCLOUD_NPM_DEPENDENCY_ARCHIVES || "[]");
+  // npm ci need not cache registry metadata. Pack the installed exact runtime
+  // dependency so the clean consumer can resolve it without any registry cache.
+  const dependencies = process.env.QCLOUD_NPM_DEPENDENCY_ARCHIVES
+    ? JSON.parse(process.env.QCLOUD_NPM_DEPENDENCY_ARCHIVES)
+    : Object.entries(metadata.dependencies).map(([name, version]) => {
+      const directory = join(root, "node_modules", name);
+      const installed = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
+      assert.equal(installed.name, name);
+      assert.equal(installed.version, version, "Runtime dependency must match the exact package pin");
+      const [dependency] = JSON.parse(run(npm, ["pack", "--json", "--ignore-scripts", "--pack-destination", temp, directory], root));
+      assert.equal(dependency.name, name); assert.equal(dependency.version, version);
+      return join(temp, dependency.filename);
+    });
   assert.ok(Array.isArray(dependencies) && dependencies.every(path => typeof path === "string" && existsSync(path)));
   run(npm, ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--omit=dev",
     join(temp, archive.filename), ...dependencies]);
