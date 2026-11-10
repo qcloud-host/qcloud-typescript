@@ -45,11 +45,16 @@ export type {
 
 export type { Model, ModelList } from "./types/model.js";
 export type { QueueCatalog, QueueProfile, QueueDeployment, QueueDeploymentList, QueueRequestParams, QueueDeploymentCreateParams } from "./types/serverless.js";
+export type { QueueRuntimeCapabilities, QueueRuntimeCursor, QueueRuntimeListParams, QueueRuntimeEndpoint, QueueRuntimeJob,
+  QueueRuntimeEndpointList, QueueRuntimeJobList, QueueRuntimeLaunchParams, QueueRuntimeJobCreateParams, QueueRuntimeStopResult, QueueRuntimeResult,
+  QueueRuntimeQuote, QueueRuntimeQuoteParams, QueueRuntimeJobQuoteParams } from "./types/queue-runtime.js";
 
 export { QCloudAI as QCloud } from "./client.js";
 export { GenerationJobError, GenerationTimeoutError } from "./resources/generation.js";
 export { renderGenerationModelReference } from "./generation-docs.js";
 export { GenerationSessionStream } from "./session-stream.js";
+export { GenerationSocket, GenerationSocketError } from "./session-socket.js";
+export type { GenerationSocketMessage, GenerationSocketOptions } from "./session-socket.js";
 export { GenerationFile } from "./download.js";
 export type { GenerationDownloadOptions } from "./resources/generation-files.js";
 export type { GenerationUploadOptions, GenerationUploadSource } from "./upload.js";

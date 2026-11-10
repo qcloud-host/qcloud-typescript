@@ -4,6 +4,7 @@ import { APIResponseValidationError, QCloudAIError } from "../error.js";
 import type { GenerationSessionStream } from "../session-stream.js";
 import type { GenerationSession, GenerationSessionConnection, GenerationSessionCreateParams, GenerationSessionOffer } from "../types/generation.js";
 import { normalizeUuid } from "../uuid.js";
+import { GenerationSocket, type GenerationSocketOptions } from "../session-socket.js";
 
 const states = new Set(["created", "connecting", "active", "closing", "closed", "review"]);
 function sessionId(value: string): string { return normalizeUuid(value, "session ID"); }
@@ -28,6 +29,13 @@ function connection(value: unknown, id: string): GenerationSessionConnection {
 }
 export class GenerationSessions {
   constructor(private client: QCloudAI) {}
+  /** Open one raw-frame native socket. No codec, retry, reconnect or WebRTC peer. */
+  openSocket(id: string, options: GenerationSocketOptions = {}): Promise<GenerationSocket> {
+    id = sessionId(id);
+    return GenerationSocket.open(id, this.client.baseURL, options,
+      timeout => this.connect(id, { signal: options.signal, timeout, maxRetries: 0 }),
+      timeout => this.close(id, { timeout, maxRetries: 0 }));
+  }
   async create(params: GenerationSessionCreateParams, options?: RequestOptions): Promise<GenerationSession> {
     if (params.billing_mode !== "metered") throw new TypeError("billing_mode:'metered' is required");
     if (!params.model || !["websocket", "webrtc"].includes(params.transport)) throw new TypeError("A model and supported session transport are required");

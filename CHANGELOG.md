@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — source candidate, not published to npm
+
+- Queue planning and inactive runtime resources, including endpoint/job quotes bound to one request UUID and exact decimal estimates.
+- Strict resource identity, public response projection and recovery IDs; quote, launch and submission never retry automatically.
+- Native WebSocket messages with pinned `ws`, bounded I/O and explicit session/billing cleanup; no automatic reconnection or media peer support.
+- Package archive installation checks exercise both ESM and CommonJS without source-tree dependencies.
+- Correct source installation, runtime dependency and OpenAI/Anthropic compatibility guidance.
 
 - Stream local files, bytes, and async byte sources into private generation input references with size/hash validation, cancellation and no retries.
 
@@ -17,7 +23,7 @@
 - Per-model documentation renderer preserving schema references and license notices.
 - Local HTTP generation tests and cross-language backend contract coverage.
 
-## 0.2.0
+## 0.2.0 — earlier source baseline
 
 - Backend HTTP contract tests for Python, TypeScript, streaming, cancellation and organization isolation.
 - Explicit organization selection and typed published-model catalog metadata.

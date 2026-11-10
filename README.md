@@ -5,7 +5,7 @@
 
 # QCloud TypeScript
 
-A typed QCloud inference and generation client for Node.js 20+, with ESM and CommonJS builds and no runtime dependencies.
+A typed QCloud inference and generation client for Node.js 20+, with ESM and CommonJS builds. Native WebSocket sessions use the pinned `ws` runtime dependency.
 
 ## Install
 
@@ -18,7 +18,7 @@ npm ci
 npm run check
 npm pack
 # In your application:
-npm install /path/to/qcloud-ai-0.2.0.tgz
+npm install /path/to/qcloud-ai-0.3.0.tgz
 ```
 
 The prepared npm package is named `qcloud-ai`. Registry publication is a separate release step.
@@ -114,7 +114,7 @@ Use its Chat Completions API with an active QCloud model ID. See [OpenAI's API](
 ```bash
 npm ci
 npm run check
-npm pack --dry-run
+npm run check:package
 ```
 
 See [examples](examples) for tools and JSON output. Tests inject local HTTP transports and make no paid model calls.
@@ -302,7 +302,7 @@ Model availability and features are determined by the QCloud catalog and upstrea
 
 ## Serverless queue drafts
 
-`client.serverless.queue` saves planning records. It has no launch or job-execution method. A draft creates no endpoint, worker, billing account or charge. The catalog may be empty until an operator publishes reviewed profiles; `runtime_available` remains `false`, and `pricing: null` means unknown, never free.
+`client.serverless.queue.deployments` saves planning records. A draft creates no endpoint, worker, billing account or charge. The catalog may be empty until an operator publishes reviewed profiles; `runtime_available` remains `false`, and `pricing: null` means unknown, never free.
 
 ```ts
 import { randomUUID } from "node:crypto";
@@ -322,7 +322,66 @@ Use a scoped QCloud key: `serverless:read` for catalog/list/retrieve and `server
 
 Create makes one HTTP attempt, even when client retries are enabled. If omitted, the SDK generates `client_request_id` and attaches it as `error.clientRequestId` to typed API, connection and response-validation errors. After an ambiguous response, explicitly reuse that UUID with the identical name, profile and organization; the server returns the same draft. Changed intent or actor with the same UUID conflicts. For durable recovery across process termination, generate and store the UUID yourself before calling. QCloud deployment UUIDs are validated, and responses expose only the public draft fields. See [the draft example](examples/queue-draft.ts).
 
+## Queue runtime (inactive)
+
+The additive `client.serverless.queue.runtime` namespace exposes `capabilities()`, endpoint `quote`, `launch`, `list`, `retrieve`, `stop`, and job `quote`, `create`, `list`, `retrieve`, `result`. Public capabilities currently return `stage: "inactive"`, `execution_available: false`, and `billing_available: false`. Installing this SDK does not enable execution. Quote issuance requires a server-approved profile and metered billing eligibility; prepaid queue admission is not supported by this release.
+
+```ts
+const runtime = client.serverless.queue.runtime;
+console.log(await runtime.capabilities());
+const page = await runtime.endpoints.list({ limit: 20 });
+for (const endpoint of page.items) console.log(endpoint.id, endpoint.state);
+// Use both cursor fields together for a subsequent page:
+if (page.next_cursor) {
+  await runtime.endpoints.list({
+    after_created_at: page.next_cursor.created_at, after_id: page.next_cursor.id,
+  });
+}
+```
+
+In an authorized environment, persist a request UUID, then call `endpoints.quote(draftId, { client_request_id })` or `jobs.quote(endpointId, { client_request_id, input: { prompt, max_tokens } })`. A quote creates no worker, model request or funds reservation. Its `estimated_cost_usd` is an exact six-decimal string; `is_spending_cap` is always `false`. Replaying the same intent returns the original quote, even after its `expires_at`; use a new UUID to request a new quote. Do not convert the estimate to a binary float for accounting.
+
+Launch with `endpoints.launch(draftId, { quote_id: quote.id, client_request_id: quote.client_request_id })` or submit with `jobs.create(endpointId, { quote_id: quote.id, client_request_id: quote.client_request_id, input })`, preserving the quoted input and organization. Quote, launch, job submission and stop each make one HTTP attempt. Persist the UUID and full intent before sending. An ambiguous failure retains `error.clientRequestId`; an explicit replay must reuse the same UUID and intent. Stop reports authoritative `financial_exposure` separately from `released`; a repeated cancellation may return `false` / `"none"`. A stop request does not itself prove provider cleanup or a refund.
+
+Lists return `{ items, next_cursor }` with `limit` from 1 to 50 (default 20). `retrieve` returns the requested public record. `jobs.result(endpointId, jobId)` returns `{ available: false }` until a validated result is available; then it includes `text`, `finish_reason`, and token `usage`. `requires_review` and held exposure may persist after an ambiguous operation. Resource UUIDs, response identity, cursor consistency, UTF-8 prompt/result bounds and usage totals are validated; private provider fields are omitted. Prompt limits are 1–16,384 UTF-8 bytes, and `max_tokens` is 1–4,096; an immutable server profile may impose smaller limits. Existing queue draft methods remain unchanged.
+
 ## Reliability
+
+### Native generation sockets
+
+For an explicitly enabled `transport: "websocket"` generation session, source
+versions with this helper expose `client.generation.sessions.openSocket(id)`.
+It returns a raw text/`Uint8Array` async iterator with `send`, `close`, `closed`,
+`encoding` and `closeResult`. Encode the model's JSON or MessagePack messages
+explicitly; the SDK does not create a WebRTC media peer.
+
+```ts
+const socket = await client.generation.sessions.openSocket(session.id, {
+  signal: abortController.signal,
+});
+try {
+  await socket.send(encodedModelInput); // string or Uint8Array
+  for await (const frame of socket) consumeModelFrame(frame);
+} finally {
+  await socket.close();
+}
+```
+
+The default relay origin is the configured QCloud API origin. A separate trusted
+QCloud relay requires an explicit bare `relayOrigin` such as `wss://api.example.com`.
+Credentials, query tokens, foreign origins and unexpected session paths are
+rejected. API headers are never forwarded to the socket. There is one capability
+request and one connection, with no automatic retries, reconnects or frame replay.
+
+By default, each message and the total pending receive payload are limited to
+16 MiB, with at most 16 queued messages and one outbound send in flight. Handshake
+and send timeouts are 10 seconds, close timeout 5 seconds, and client lifetime at
+most one hour. Options may narrow these ceilings. Aborting, leaving iteration,
+transport failure or expiry closes the socket and requests HTTP session closure
+once. `GenerationSocketError.closeError` preserves an additional cleanup failure;
+`closeResult.billing` remains authoritative. Closing is not proof of zero cost
+or confirmed remote billing teardown. These source additions do not activate a
+model or publish a new package. See [native session boundaries](https://qcloud.host/api-docs).
 
 Read-only GET requests retry connection failures, timeouts, HTTP 408/409/429 and 5xx responses up to twice, with backoff and `Retry-After` support. Inference POST requests retry only HTTP 429 rejections. An ambiguous connection failure, timeout or server error is surfaced without replaying a potentially billable generation. Authentication/billing failures and started streams are never retried. Set `maxRetries: 0` to disable all retries. A manual retry after an ambiguous failure may incur duplicate usage.
 

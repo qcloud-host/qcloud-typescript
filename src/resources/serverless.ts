@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { QCloudAI, RequestOptions } from "../client.js";
 import { APIResponseValidationError, QCloudAIError } from "../error.js";
 import { normalizeUuid } from "../uuid.js";
+import { ServerlessQueueRuntime } from "./queue-runtime.js";
 import type { QueueCatalog, QueueDeployment, QueueDeploymentCreateParams, QueueDeploymentList, QueueProfile, QueueRequestParams } from "../types/serverless.js";
 
 const prefix = "/serverless/queue";
@@ -63,7 +64,8 @@ export class QueueDeployments {
 }
 export class ServerlessQueue {
   readonly deployments: QueueDeployments;
-  constructor(private client: QCloudAI) { this.deployments = new QueueDeployments(client); }
+  readonly runtime: ServerlessQueueRuntime;
+  constructor(private client: QCloudAI) { this.deployments = new QueueDeployments(client); this.runtime = new ServerlessQueueRuntime(client); }
   async catalog(params: QueueRequestParams = {}, options?: RequestOptions): Promise<QueueCatalog> {
     const v = record(await this.client._request("GET", `${prefix}/catalog${query(params)}`, options));
     if (v.stage !== "draft_preview" || v.runtime_available !== false || !Array.isArray(v.profiles) || v.profiles.length > 16
