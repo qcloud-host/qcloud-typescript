@@ -2,6 +2,9 @@
 
 ## 0.4.0 — source candidate, not published
 
+- Cancellation and deadlines now stop buffered SSE events between consumer yields, including explicit `stream.abort()`.
+- Clean consumer package checks run on Windows through Node's npm entry point without shell invocation.
+- Runnable streaming/cancellation and error/retry examples, with a cross-platform examples guide and corrected Messages documentation.
 - `APIError` now carries the request ID (`X-Request-ID`, or `request-id` from Messages), response headers, parsed `Retry-After`, reported admission rate limits and the server error code, and keeps the server's error type.
 - New `BadRequestError` (400), `ConflictError` (409) and `UnprocessableEntityError` (422), all subclasses of `APIError`.
 - POST requests are retried after connection failures that occurred before the request was sent. Ambiguous failures after sending are still never replayed.

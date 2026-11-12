@@ -216,6 +216,43 @@ test("timeout remains active while consuming a stream", async () => {
     }
   }, APITimeoutError);
 });
+
+function bufferedStreamClient(extra = {}) {
+  return client(async () => new Response(
+    'data: {"choices":[{"delta":{"content":"first"}}]}\n\n' +
+    'data: {"choices":[{"delta":{"content":"second"}}]}\n\n' +
+    'data: [DONE]\n\n',
+    { headers: { "content-type": "text/event-stream" } },
+  ), extra);
+}
+
+test("caller cancellation discards events already buffered between yields", async () => {
+  const controller = new AbortController();
+  const stream = await bufferedStreamClient().chat.completions.create(
+    { ...params, stream: true }, { signal: controller.signal },
+  );
+  const iterator = stream[Symbol.asyncIterator]();
+  assert.equal((await iterator.next()).value?.choices[0].delta.content, "first");
+  const reason = new Error("stop after first chunk");
+  controller.abort(reason);
+  await assert.rejects(iterator.next(), (error) => error === reason);
+});
+
+test("explicit stream abort discards events already buffered between yields", async () => {
+  const stream = await bufferedStreamClient().chat.completions.create({ ...params, stream: true });
+  const iterator = stream[Symbol.asyncIterator]();
+  await iterator.next();
+  await stream.abort();
+  assert.equal((await iterator.next()).done, true);
+});
+
+test("a deadline during a consumer pause discards buffered stream events", async () => {
+  const stream = await bufferedStreamClient({ timeout: 20 }).chat.completions.create({ ...params, stream: true });
+  const iterator = stream[Symbol.asyncIterator]();
+  await iterator.next();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await assert.rejects(iterator.next(), APITimeoutError);
+});
 test("model ids are encoded and multimodal/tool parameters are preserved", async () => {
   const calls: { url: string; body: unknown }[] = [];
   const c = client(async (url, init) => {

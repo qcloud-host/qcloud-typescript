@@ -65,6 +65,10 @@ export class Stream<T> implements AsyncIterable<T> {
         if (done) buffer += "\n\n";
         let match: RegExpExecArray | null;
         while ((match = /\r\n|\r|\n/.exec(buffer))) {
+          // The consumer may cancel or exceed its deadline between two yields
+          // from the same network chunk. Do not drain buffered events afterward.
+          if (this.closed) return;
+          this.checkAbort();
           if (!done && match[0] === "\r" && match.index === buffer.length - 1)
             break;
           const line = buffer.slice(0, match.index);

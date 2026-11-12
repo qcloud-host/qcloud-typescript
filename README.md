@@ -18,7 +18,7 @@ npm ci
 npm run check
 npm pack
 # In your application:
-npm install /path/to/qcloud-ai-0.3.0.tgz
+npm install /path/to/qcloud-ai-0.4.0.tgz
 ```
 
 The prepared npm package is named `qcloud-ai`. Registry publication is a separate release step.
@@ -62,7 +62,7 @@ for await (const chunk of stream) {
 }
 ```
 
-Breaking iteration closes the HTTP body. Call `await stream.abort()` to close a stream explicitly, including one you have not iterated. The configured timeout remains active until stream consumption ends.
+Breaking iteration closes the HTTP body. Call `await stream.abort()` to close a stream explicitly, including one you have not iterated. The configured timeout remains active until stream consumption ends, including pauses in your consumer. Cancellation stops buffered events from being delivered after the next yield. See [the runnable Ctrl+C example](examples/stream-and-cancel.mjs) for cleanup with `try/finally`. Closing the connection does not prove zero usage or a refund.
 
 ## Models and embeddings
 
@@ -146,7 +146,7 @@ npm run check
 npm run check:package
 ```
 
-See [examples](examples) for tools, JSON output, Messages, an Express service, a Next.js route handler and a background worker. Tests inject local HTTP transports and make no paid model calls.
+See [the examples guide](examples/README.md) for environment setup on macOS/Linux and PowerShell, streaming cancellation, error handling, tools, JSON output, Messages, a Node.js HTTP service, a Next.js route handler and a background worker. Tests inject local HTTP transports and make no paid model calls. The package check runs on Windows as well as Linux without invoking a command shell.
 
 ## API coverage
 
@@ -325,9 +325,9 @@ verified backend transport and is separate from catalog presence.
 | Generation models and jobs                      | Schema discovery, arbitrary JSON, durable jobs and polling |
 | Generated files                                 | Authenticated binary streaming and single byte ranges       |
 | OpenAI Responses, files, audio, realtime         | Not exposed by this SDK/backend release                     |
-| Anthropic Messages                              | Backend compatibility endpoint; use the official Anthropic client |
+| Anthropic Messages                              | `client.messages`; supported text, image, tool and streaming subset |
 
-Model availability and features are determined by the QCloud catalog and upstream provider. Use the QCloud model ID, which may differ from the provider's public model ID. The backend also supports `/messages` with Anthropic version `2023-06-01` for compatible text, image, and tool requests. This QCloud SDK has no `messages` resource; use the official Anthropic client with `baseURL: "https://platform.qcloud.host/api"` (it appends `/v1/messages`) and your QCloud key. Beta features and exact token counting are rejected, so this does not promise full Claude Code compatibility. This library is maintained by QCloud and is not an OpenAI or Anthropic product.
+Model availability and features are determined by the QCloud catalog and upstream provider. Use the QCloud model ID, which may differ from the provider's public model ID. The SDK's `client.messages` resource sets Anthropic version `2023-06-01` for compatible text, image, and tool requests. You may also use the official Anthropic client with `baseURL: "https://platform.qcloud.host/api"` (it appends `/v1/messages`) and your QCloud key. Beta features and exact token counting are rejected, so this does not promise full Claude Code compatibility. This library is maintained by QCloud and is not an OpenAI or Anthropic product.
 
 ## Serverless queue drafts
 
@@ -414,7 +414,7 @@ once. `GenerationSocketError.closeError` preserves an additional cleanup failure
 or confirmed remote billing teardown. These source additions do not activate a
 model or publish a new package. See [native session boundaries](https://qcloud.host/api-docs).
 
-Read-only GET requests retry connection failures, timeouts, HTTP 408/409/429 and 5xx responses up to twice, with backoff and `Retry-After` support. Inference POST requests retry only HTTP 429 rejections. An ambiguous connection failure, timeout or server error is surfaced without replaying a potentially billable generation. Authentication/billing failures and started streams are never retried. Set `maxRetries: 0` to disable all retries. A manual retry after an ambiguous failure may incur duplicate usage.
+Authentication/billing failures and started streams are never retried. A manual retry after an ambiguous failure may incur duplicate usage. The [error-handling example](examples/errors-and-retries.mjs) shows how to retain request IDs and admission limits without adding a second retry loop.
 
 Streaming handles fragmented UTF-8, CRLF/LF events, multiple data lines, error payloads, and `[DONE]`. A connection ending without `[DONE]` raises a response-validation error instead of reporting a truncated response as complete. HTTP errors are checked before returning a stream; HTTP and streamed API errors retain the server request ID. Invalid JSON or an HTML response from a misconfigured endpoint produces a typed error.
 

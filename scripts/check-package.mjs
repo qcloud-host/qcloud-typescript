@@ -9,14 +9,19 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const metadata = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const temp = mkdtempSync(join(tmpdir(), "qcloud-package-"));
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+// npm.cmd cannot be executed directly by execFile on Windows. npm exposes its
+// JavaScript entry point to lifecycle scripts, so invoke it with Node without a
+// shell (also preserving spaces and metacharacters in archive paths).
+const npmCLI = process.env.npm_execpath;
+assert.ok(npmCLI && existsSync(npmCLI), "Run this check with npm run check:package");
 const env = { ...process.env, NODE_PATH: "" };
 for (const key of ["QCLOUD_API_KEY", "QCLOUD_BASE_URL", "QCLOUD_ORGANIZATION_ID"]) delete env[key];
 const run = (command, args, cwd = temp) => execFileSync(command, args, {
   cwd, encoding: "utf8", timeout: 120_000, env,
 });
+const runNpm = (args, cwd = temp) => run(process.execPath, [npmCLI, ...args], cwd);
 try {
-  const [archive] = JSON.parse(run(npm, ["pack", "--json", "--ignore-scripts", "--pack-destination", temp], root));
+  const [archive] = JSON.parse(runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", temp], root));
   assert.equal(archive.name, metadata.name);
   assert.equal(archive.version, metadata.version);
   const files = archive.files.map(file => file.path);
@@ -33,12 +38,12 @@ try {
       const installed = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
       assert.equal(installed.name, name);
       assert.equal(installed.version, version, "Runtime dependency must match the exact package pin");
-      const [dependency] = JSON.parse(run(npm, ["pack", "--json", "--ignore-scripts", "--pack-destination", temp, directory], root));
+      const [dependency] = JSON.parse(runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", temp, directory], root));
       assert.equal(dependency.name, name); assert.equal(dependency.version, version);
       return join(temp, dependency.filename);
     });
   assert.ok(Array.isArray(dependencies) && dependencies.every(path => typeof path === "string" && existsSync(path)));
-  run(npm, ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--omit=dev",
+  runNpm(["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--omit=dev",
     join(temp, archive.filename), ...dependencies]);
   const smoke = `
 import assert from "node:assert/strict";
