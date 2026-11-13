@@ -74,8 +74,9 @@ jobs:
       - run: npm ci
       - id: pack
         run: |
+          npm run build
           mkdir -p out
-          tarball=$(npm pack --pack-destination out --json | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0))[0].filename)")
+          tarball=$(npm pack --ignore-scripts --pack-destination out --json | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0))[0].filename)")
           (cd out && sha256sum "$tarball" > SHA256SUMS && cat SHA256SUMS)
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
           echo "sha256=$(cut -d' ' -f1 out/SHA256SUMS)" >> "$GITHUB_OUTPUT"
